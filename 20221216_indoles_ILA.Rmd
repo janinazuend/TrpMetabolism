@@ -1,0 +1,491 @@
+---
+title: "WP3_indoles_ILA"
+output: html_document
+date: '2022-12-16'
+---
+
+```{r setup, include=FALSE}
+.libPaths('C:\\Users\\zuendj\\Documents\\R4Libs')
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "C:/Users/zuendj/Desktop/03_data R/wp3", cho = TRUE, warning = FALSE, message = FALSE)
+
+# Install Packages:
+# install.packages("rlang")
+# install.packages("tidyr")
+# install.packages("ggbreak")
+library(rstatix)
+library(ggpubr)
+library(stats)
+library(tidyverse)
+library(ggplot2)
+library(tidyr)
+# # install.packages("devtools")
+# # devtools::install_github("slowkow/ggrepel")
+library(ggrepel)
+library(ggbreak)
+library(openxlsx)
+library(microViz)
+```
+
+#1. Load the data
+```{r}
+setwd("C:/Users/zuendj/Desktop/03_data R/wp3/input")
+###get the file
+
+
+#########################################
+#load the data
+########################################
+metaboliteswide <- left_join(read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240103_Indole_data.xlsx", sheet = "indole_data_analysis"),
+ read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
+  subset(time %in% "48h")
+```
+
+
+
+##2. Calibration
+### Set data frame with Calibration values
+### Indole acrylate, Skatole & Indole acetamide are not detected => will not be considered, for other compounds; define detection limit
+
+```{r}
+df_calibration <- matrix(0,1,6)
+df_calibration[1,] <-c(0.0281, 0.0251, 0.0294, 0.0275, 0.0279, 0.0212)
+
+
+colnames(df_calibration) <-c("Indolelactate", "Indoleacetate", "Indole", "Indolepropionate", "Tryptophan",  "Tryptophol")
+rownames(df_calibration)<-c("a")
+
+df_calibration
+```
+
+```{r}
+p<-ncol(metaboliteswide)
+indoles <-c("Indolelactate",  "Indole", "Indolepropionate", "Tryptophan")
+
+metaboliteswide %>%
+  mutate(Delta_Indolelactate_mM = as.numeric(Indolelactate) * df_calibration[1,c("Indolelactate")] *4,
+         Dealta_Indole_mM = as.numeric(Indole) * df_calibration[1,c("Indole")] *4,
+         Delta_Indolepropionate_mM = as.numeric(Indolepropionate) * df_calibration[1,c("Indolepropionate")] *4,
+         Delta_Tryptophan_mM = as.numeric(Tryptophan) * df_calibration[1,c("Tryptophan")] *4,
+         Indolelactate_mM = as.numeric(ILA) * df_calibration[1,c("Indolelactate")] *4,
+         Indole_mM = as.numeric(Indole.) * df_calibration[1,c("Indole")] *4,
+         Indolepropionate_mM = as.numeric(IPA) * df_calibration[1,c("Indolepropionate")] *4,
+         Tryptophan_mM = as.numeric(Trp) * df_calibration[1,c("Tryptophan")] *4
+                  ) -> df_concentrations
+```
+
+```{r}
+write.xlsx(df_concentrations, "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240227_Indole_data_calculations.xlsx")
+```
+
+#OD
+```{r}
+df_concentrations%>%
+  subset(stress %in% "no" & !donor_name %in% "blank" & !condition %in% "pectin_mono")%>%
+  subset(condition_tryptophan %in% "ILA_5")%>%
+  ggplot(aes(y=blank_corr, x=condition))+
+  geom_point(aes(colour=donor_name))
+
+df_concentrations%>%
+  subset(!stress %in% "no" )%>%
+  ggplot(aes(y=blank_corr, x=stress))+
+  geom_point(aes(colour=donor_name))
+```
+
+##ILA enrichment
+```{r}
+
+df_concentrations%>%
+  subset(stress %in% "no" & !donor_name %in% "blank" & !condition %in% "pectin_mono")%>%
+  subset(condition_tryptophan %in% "ILA_5")%>%
+  subset(condition %in% c("pectin", "6C+muc", "H2O"))%>%
+  mutate(condition =factor(condition, levels=c("6C+muc", "H2O", "pectin")))->sub
+
+sub%>%
+  group_by(condition)%>%
+  shapiro_test(Indolepropionate_mM)
+
+sub%>%
+  t_test(Indolepropionate_mM ~ condition)%>%
+  add_significance()%>%
+  add_xy_position()->stat
+
+
+
+sub%>%
+  ggplot(aes(x=condition, y=Indolepropionate_mM))+
+  geom_boxplot(outlier.shape=NA)+
+  geom_jitter(aes(colour=donor_name), width=0.1)+
+  stat_pvalue_manual(stat, hide.ns = F,  bracket.nudge.y=F, size=6)+
+    theme(text= element_text(size = 15), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        axis.text.x = element_text(angle=90, vjust=0.5, hjust=1), 
+        strip.background = element_blank(), 
+        axis.title.x=element_blank())+
+  ylab("IPA [mM]")+labs(colour="Donor")+
+  scale_x_discrete(labels=c("H2O" = expression(H[2]*O), "pectin"="Pectin", "pectin_mono" = "PE mono"))+
+  # ylim(0, 42)+
+  scale_colour_manual(values=c("#1f78b4","#a6cee3","#b2df8a", "#e31a1c", "#ff7f00",  "#cab2d6"), labels= c("D17", "D18", "D19", "D20", "D21", "D22"))+
+   ylim(0,8)
+
+ggsave(filename = "ILA_c-source..jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 10,
+       height = 9,
+       units = c("cm"))
+
+
+aggregate(sub$Indolepropionate_mM, by = list(sub$condition), FUN =sd)
+
+# sub%>%
+#   subset(calc %in% "abs_ipa")->calculare
+# 
+#   
+# round(mean(calculare$conc), digits =3)
+# round(sd(calculare$conc), digits =2)
+```
+
+
+##Co cultivation
+```{r}
+metaboliteswide <- read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/04_pureculture_screening/20240312_pure_culture_screening_uhplc.xlsx", sheet = "co-culture")
+
+df_calibration <- matrix(0,1,4)
+df_calibration[1,] <-c(0.279, 0.0281,  0.0294, 0.0275 )
+
+
+
+
+colnames(df_calibration) <-c("Tryptophan","ILA",  "Indole", "IPA")
+rownames(df_calibration)<-c("a")
+
+
+metaboliteswide %>%
+  mutate(ILA_mM = as.numeric(ILA) * df_calibration[1,c("ILA")] *4,
+         Tryptophan_mM = as.numeric(Tryptophan) * df_calibration[1,c("Tryptophan")] *4,
+         Indole_mM = as.numeric(Indole) * df_calibration[1,c("Indole")] *4,
+         IPA_mM = as.numeric(IPA) * df_calibration[1,c("IPA")] *4 )%>%
+  gather(metabolite, conc, "ILA_mM":"IPA_mM")%>%
+  subset(!metabolite %in% "Tryptophan_mM")%>%
+  mutate(conc = ifelse(is.na(conc), 0, conc))-> df_concentrations
+
+```
+
+```{r}
+
+left_join(df_concentrations, left_join(setNames(aggregate(df_concentrations$conc, by=list(df_concentrations$`C-source`, df_concentrations$setup, df_concentrations$IPA_producer, df_concentrations$metabolite, df_concentrations$name), FUN=mean, na.rm=T), c("C-source","setup","IPA_producer", "metabolite", "name","mean")), 
+          setNames(aggregate(df_concentrations$conc, by=list(df_concentrations$`C-source`, df_concentrations$setup, df_concentrations$IPA_producer, df_concentrations$metabolite, df_concentrations$name), FUN=sd, na.rm=T), c("C-source","setup","IPA_producer", "metabolite","name", "sd")))) %>%
+  subset(!is.na(name))%>%
+  subset(IPA_producer %in% c("Enterocloster"))%>%
+  mutate(bdl = NA)%>%
+  mutate(bdl = ifelse(conc == 0, "BDL", bdl))%>%
+  mutate(name= factor(name, levels=c("L.e", "E.a", "L.e + E.a")))%>%
+  mutate(metabolite = factor(metabolite, levels = c("Indole_mM", "ILA_mM", "IPA_mM")))%>%
+  ggplot(aes(x=name, y= conc))+
+   geom_bar(aes(y=mean, fill=metabolite), stat="identity", position =position_dodge(0.9), colour="black")+ 
+  # geom_point(aes(fill=metabolite), position =position_dodge(0.9))+
+   geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd, group = metabolite), colour= "black", width=.2, position =position_dodge(0.9))+
+  facet_grid(col=vars(`C-source`), scale="free")+
+  scale_x_discrete(labels = expression( italic("L. eligens"), italic("E. aldenensis"),Co-culture))+
+  scale_fill_manual(values=c( "grey","cyan4", "bisque3", "black"), labels=c("Indole","ILA", "IPA"), name="Metabolite")+
+   theme(text= element_text(size = 15), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        axis.text.x = element_text(angle=45, vjust=1, hjust=1), 
+        strip.background = element_blank(), 
+        axis.title.x=element_blank())+
+  ylab("Concentration [mM]")
+
+
+
+ggsave(filename = paste( "Co-culture.jpeg"),
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 11.5,
+       height = 8,
+       units = c("cm"))
+```
+
+
+```{r}
+left_join(df_concentrations, left_join(setNames(aggregate(df_concentrations$conc, by=list(df_concentrations$`C-source`, df_concentrations$setup, df_concentrations$IPA_producer, df_concentrations$metabolite, df_concentrations$name), FUN=mean, na.rm=T), c("C-source","setup","IPA_producer", "metabolite", "name","mean")), 
+          setNames(aggregate(df_concentrations$conc, by=list(df_concentrations$`C-source`, df_concentrations$setup, df_concentrations$IPA_producer, df_concentrations$metabolite, df_concentrations$name), FUN=sd, na.rm=T), c("C-source","setup","IPA_producer", "metabolite","name", "sd")))) %>%
+  subset(!is.na(name))%>%
+  subset(!metabolite %in% "Indole_mM")%>%
+  subset(IPA_producer %in% c("Clostridium_sporogenes"))%>%
+  ggplot(aes(x=name, y= conc))+
+   geom_bar(aes(y=mean, fill=metabolite), stat="identity", position =position_dodge(0.9), colour="black")+ 
+  # geom_point(aes(fill=metabolite), position =position_dodge(0.9))+
+   geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd, group = metabolite), colour= "black", width=.2, position =position_dodge(0.9))+
+  
+  facet_grid(col=vars(`C-source`), scale="free")+
+  scale_x_discrete(labels = c("C.s"= "Clostridium sporogenes", "L.e" = "L. eligens","L.e + C.s" ="Co-culture"))
+
+```
+### Co-culture composition analysis
+```{r}
+phylo <-readRDS("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/06_co_cultivation_ILA/sequencing/phyloseq.RDS")
+# phylo_test <-readRDS("P:/Shared_documents/Janina_Zuend/08_phd/Raw_Data_PB/phyloseq/phyloseq.RDS")
+phylo%>%
+  physeq_add_metadata(physeq = .,
+                      metadata = "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/06_co_cultivation_ILA/sequencing/mapping_file.xlsx" %>%
+                      readxl::read_xlsx(),
+                      sample_column = "sample_name") -> phylo
+
+
+phylo%>%
+  tax_fix()->phylo
+
+
+ps_strain_filt <- phylo
+# threshold in %
+threshold = 0.5
+
+# filter per sample to remove all ASV lower in abundance than threshold (%)
+otu_table(ps_strain_filt) <- otu_table(ps_strain_filt) %>%
+  as.data.frame() %>%
+  dplyr::mutate(across(everything(), ~ ifelse(. <= sum(.) * (threshold/100), 0, .))) %>% otu_table(., taxa_are_rows = TRUE)
+
+# remove all ASVs that are not present in any sample
+ps_strain_filt <- ps_strain_filt %>%
+  filter_taxa(function(x) sum(x > 0) > 0, TRUE)
+```
+
+```{r}
+myPal["[Eubacterium] eligens group"]<-"cyan4"
+myPal["Lachnospiraceae Family"]<-"bisque3"
+
+
+ps_strain_filt%>% 
+   tax_select(tax_list = c("[Eubacterium] eligens group", "Lachnospiraceae Family"))%>%
+    subset_samples(IPA_producer %in% c("Enterocloster"))%>%
+   subset_samples(C_source %in% c("Pectin"))%>%
+  subset_samples(!C_source %in% "mock")%>%
+     ps_arrange(sample_name)%>%
+      microViz::comp_barplot(
+    tax_level = "Genus",
+    label = "sample_name",
+    tax_order = filt,
+    sample_order = "default",
+    other_name = "other", 
+    n_taxa = 20,
+    bar_width = 0.9,
+    tax_transform_for_plot = "compositional", 
+    merge_other = FALSE,
+       # palette = myPal
+      ) +
+    ylab("Proportion") +
+    xlab( "")-> p_3C
+
+p_3C +
+  scale_fill_manual(values= c(  "bisque3","cyan4"), labels= expression(italic("E. aldenensis"), italic("L. eligens")), name="")+
+  theme(text = element_text(size=15),
+        legend.text = element_text(hjust=0))
+
+ggsave(filename = paste( "Co-culture_rel_abund.jpeg"),
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 8,
+       height = 5,
+       units = c("cm"))
+```
+
+```{r}
+OD_kinetic <- read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/06_co_cultivation_ILA/OD_Co-Cultivation_TRy_ILA_18042024.xlsx", sheet = "R_import")%>%
+  gather(sample, OD, "1_L_3C":"3_E_PE")
+
+
+separate(OD_kinetic, col=sample, into = c("rep", "bacteria", "C_source"), sep ="_")%>%
+  mutate(condition = ifelse(bacteria == "LC" | bacteria =="LB" | bacteria == "LE", "Co-culture", NA))%>%
+  mutate(condition = ifelse(bacteria == "E" , "E. aldenensis", condition))%>% 
+  mutate(condition = ifelse(bacteria == "C" , "C. sporogenes", condition))%>%
+   mutate(condition = ifelse(bacteria == "B" , "B. pullicaecorum", condition))%>%
+   mutate(condition = ifelse(bacteria == "L" , "L. eligens", condition))->OD_kinetic
+
+rbind(OD_kinetic%>%
+  subset(!bacteria %in% "L")%>%
+    mutate(IPA_producer = condition), 
+  OD_kinetic%>%
+    subset(bacteria %in% "L") %>%
+    mutate(IPA_producer = "E. aldenensis"))
+ 
+
+  
+  
+```
+
+```{r}
+left_join(setNames(aggregate(OD_kinetic$OD, by=list(OD_kinetic$`Time.[h]`, OD_kinetic$C_source,  OD_kinetic$condition, OD_kinetic$bacteria), FUN=mean), c("time", "C_source", "condition", "bacteria","mean")), setNames(aggregate(OD_kinetic$OD, by=list(OD_kinetic$`Time.[h]`, OD_kinetic$C_source,  OD_kinetic$condition , OD_kinetic$bacteria), FUN=sd), c("time", "C_source", "condition","bacteria", "sd")))->means_OD
+
+means_OD %>%
+  mutate(C_source = ifelse(C_source == "PE", "Pectin", C_source))%>%
+  subset(bacteria %in% c("E", "LE", "L"))%>%
+  mutate(bacteria = factor(bacteria, levels=c("L", "E", "LE")))%>%
+  ggplot(aes(x=time, y=mean))+
+  geom_ribbon(aes(ymin = mean-sd, ymax = mean + sd, fill=bacteria, group=bacteria), alpha=0.2)+
+  geom_line(aes(colour=bacteria))+
+  facet_wrap(vars( C_source))+
+  ylab("OD600")+xlab("Time[h]")+
+  scale_colour_manual(values=c("cyan4", "bisque3", "black"), labels = expression( italic("L. eligens"),italic("E. aldenesis"), Co-culture), name="Condition")+
+ scale_fill_manual(values=c("cyan4", "bisque3", "black"), guide="none")+
+   theme(text= element_text(size = 15), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.background = element_blank(),
+        legend.text = element_text(hjust=0))
+
+ggsave(filename = paste( "Co-culture_growth.jpeg"),
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 13,
+       height = 8,
+       units = c("cm"))
+```
+
+#Pure culture screening
+```{r}
+pure_cult <- read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/04_pureculture_screening/import/20240507_pure_culture_screening_merged_data.xlsx", sheet = "R_import")%>%
+  separate(., col=condition, into = c("tryptophan",  "C_source"), sep ="_")
+```
+
+```{r}
+
+df_calibration <- matrix(0,1,4)
+df_calibration[1,] <-c( 0.0281,  0.0294, 0.0275 , 0.0251)
+
+
+colnames(df_calibration) <-c("ILA",  "Indole", "IPA", "IA")
+rownames(df_calibration)<-c("a")
+
+```
+
+```{r}
+pure_cult%>%
+  subset(C_source %in% "3C" )%>%
+  subset(growth %in% "yes") %>%
+  subset(!Species %in% c("Control", "control"))%>%
+  mutate(cspor = "no")%>%
+  subset(Species %in% "Clostridium sporogenes")%>%
+  mutate(ILA_mM = as.numeric(ILA) * df_calibration[1,c("ILA")] *4,
+         Indole_mM = as.numeric(Indole) * df_calibration[1,c("Indole")] *4,
+         IPA_mM = as.numeric(IPA) * df_calibration[1,c("IPA")] *4 ,
+         IA_mM = as.numeric(IA) * df_calibration[1,c("IA")] *4 )%>%
+  subset(tryptophan %in% "ILA")->sub
+
+round(mean(sub$ILA_mM), digits=3)
+round(sd(sub$ILA_mM), digits=3)
+```
+
+```{r}
+pure_cult%>%
+   
+  subset(C_source %in% "3C" )%>%
+  subset(growth %in% "yes") %>%
+  subset(!Species %in% c("Control", "control"))%>%
+  mutate(cspor = "no")%>%
+  mutate(cspor = ifelse(Species == "Clostridium sporogenes", "yes", cspor))%>%
+  mutate(Species = ifelse(strain == "DSM 19262", paste(Species, strain), Species))%>%
+  mutate(Species = ifelse(Species == "[Clostridium = Tyzzerella] nexile", paste("Tyzzerella nexile"), Species))%>%
+   mutate(Species = ifelse(Species == "Lachnospira pectinoshiza", "Lachnospira pectinoschiza", Species))%>%
+  mutate(Species = ifelse(strain == "FBT_C", paste(Species, strain), Species))%>%
+  mutate(ILA_mM = as.numeric(ILA) * df_calibration[1,c("ILA")] *4,
+         Indole_mM = as.numeric(Indole) * df_calibration[1,c("Indole")] *4,
+         IPA_mM = as.numeric(IPA) * df_calibration[1,c("IPA")] *4 ,
+         IA_mM = as.numeric(IA) * df_calibration[1,c("IA")] *4 )%>%
+  gather(metabolite, conc, "ILA_mM":"IA_mM")%>%
+  mutate(conc = ifelse(conc == 0, NA, conc))%>%
+  subset(tryptophan %in% c("Trp") | tryptophan %in% c("ILA") & metabolite %in% c("IPA_mM", "Indole_mM", "IA_mM")  )%>%
+  mutate(tryptophan = ifelse(tryptophan == "Trp", "Tryptophan", tryptophan))%>%
+  mutate(tryptophan = factor (tryptophan, levels = c("Tryptophan", "ILA")))%>%
+  mutate(metabolite = factor(metabolite, levels = c("Indole_mM", "IA_mM", "ILA_mM", "IPA_mM")))%>%
+  mutate(Species = factor(Species))%>%
+  # mutate(Species = reorder(Species, desc(IPA)))%>%
+  ggplot(aes(y=Species, x=metabolite, fill =conc))+
+  geom_tile(colour="black", aes(width=1, height = 1))+
+  scale_fill_gradient(low = "lightgrey",
+  high = "cyan4", na.value = "gray95", name="Concentration [mM]")+
+  facet_grid(col=vars(tryptophan), rows=vars(cspor), scales="free",  space="free")+
+  theme(text= element_text(size = 15), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.background = element_blank(),
+        strip.text.y = element_blank(),
+        legend.text = element_text(),
+        axis.title  = element_blank(),
+        axis.text.y = element_text( face="italic"),
+        axis.text.x = element_text(angle=45, vjust=1, hjust=1),
+        legend.position = "bottom",
+        legend.justification = "left")+
+  scale_x_discrete(labels= c("IPA_mM"="IPA", "IA_mM"="IAA", "ILA_mM"="ILA", "Indole_mM"="Indole"))
+  
+ggsave(filename = paste( "purestains.jpeg"),
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 12.5,
+       height = 13,
+       units = c("cm"))
+unique(sub$Strain)
+  
+```
+
+```{r}
+pure_cult%>%
+  subset(C_source %in% "3C" )%>%
+  subset(growth %in% "yes") %>%
+   subset(tryptophan %in% "Trp")%>%
+  # subset(Species %in% c("Enterocloster aldenensis", "Butyricicoccus pullicaecorum"))%>%
+   subset(Species %in% c("Lachnospira eligens", "Lachnospira pectinoshiza"))%>%
+   mutate(ILA_mM = as.numeric(ILA) * df_calibration[1,c("ILA")] *4,
+         Indole_mM = as.numeric(Indole) * df_calibration[1,c("Indole")] *4,
+         IPA_mM = as.numeric(IPA) * df_calibration[1,c("IPA")] *4 ,
+         IA_mM = as.numeric(IA) * df_calibration[1,c("IA")] *4 )%>%
+  gather(metabolite, conc, "ILA_mM":"IA_mM")%>%
+  mutate(conc = ifelse(conc == 0, NA, conc))-> sub
+
+left_join(setNames(aggregate(sub$conc, by=list( sub$metabolite,   sub$Species, sub$strain), FUN=mean), c("metabolite", "Species","Strain","mean")), 
+          setNames(aggregate(sub$conc, by=list( sub$metabolite,  sub$Species, sub$strain), FUN=sd), c("metabolite", "Species","Strain", "sd")))->means_trp
+
+means_trp%>%
+  mutate(mean = ifelse(is.na(mean), 0, mean))%>%
+  mutate(detect = ifelse(mean ==0 , "BDL", ""))%>%
+  subset(metabolite %in% c("ILA_mM", "IPA_mM"))%>%
+  ggplot(aes(y=mean, x=metabolite, label = detect))+
+  geom_bar(aes(y=mean, fill=Species), stat="identity", position =position_dodge(0.9), colour="black")+
+  geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd, group = Species), colour= "black", width=.2, position =position_dodge(0.9))+
+  theme(text= element_text(size = 15), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.background = element_blank(),
+        
+        axis.title.x  = element_blank(),
+        axis.text.y = element_text( ),
+         axis.text.x = element_text(angle=45, vjust=1, hjust=1),
+        legend.text = element_text (face="italic"),
+        # legend.position = "bottom",
+        legend.justification = "left")+
+  scale_fill_manual(values = c("bisque3", "cyan4", "seagreen"))+
+  geom_text(aes(label = detect, group = Species), position=position_dodge(0.9), size=5, colour="black", angle=60, hjust = -0.5, vjust=0)+
+  scale_x_discrete(labels= c("IPA_mM"="IPA", "IA_mM"="IA", "ILA_mM"="ILA", "Indole_mM"="Indole"))+
+  ylab("Concentration [mM]")
+  
+ggsave(filename = paste( "leligens_trp.jpeg"),
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 15,
+       height = 7,
+       units = c("cm"))
+```
+
+
+```{r}
+excel<-read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/Ox_stress/meta_new_upload.xlsx")$sample_name
+
+length(excel)
+
+df<-setNames(as.data.frame(list.files("P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/Ox_stress/raw/230630_M06272_0140_000000000-L3NKW_v2")), c("sample_name"))
+
+first_part <- sapply(str_split(df$sample_name, "_"), `[`, 1)
+
+
+setdiff( excel, first_part)
+
+str_count(first_part$sample_name)
+```
+
+

@@ -1,0 +1,827 @@
+---
+title: "Untitled"
+author: "Janina Zünd"
+date: "2024-02-26"
+output: html_document
+---
+```{r}
+.libPaths('C:\\Users\\zuendj\\Documents\\R4Libs')
+# BiocManager::install("dada2")
+# install.packages("MiscMetabar")
+# library(MiscMetabar)
+# library(DECIPHER)
+library(phyloseq)
+library(ggh4x)
+
+
+list.files("P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/ILA_enrichments/upload")
+```
+
+```{r}
+phylo_test <-readRDS("P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/ILA_enrichments/phyloseq_phylo.RDS")
+
+
+
+phylo_test%>%
+  physeq_add_metadata(physeq = .,
+                      metadata = "P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/ILA_enrichments/map_run2024..xlsx" %>%
+                        readxl::read_xlsx(),
+                      sample_column = "sample_name") -> phylo_test
+
+```
+
+```{r}
+write.xlsx( as.data.frame(refseq(phylo_test))%>%
+              rownames_to_column("ASV"), file ="P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/enriched_asvs/asvs_ILA.xlsx")
+```
+
+```{r}
+meta<-sample.data.frame(phylo_test)
+```
+
+```{r}
+ps_strain_filt <- phylo_test
+
+
+ps_strain_filt%>%
+  phyloseq_check_lib_size(data_color = "donor_name",
+                          data_facet = NULL,
+                          nreads_display = 2399,
+                       first_n = nsamples(phyloseq)) -> lib
+
+
+```
+
+
+
+### Rarefaction
+it is recommended to do rarefaction for alpha and beta diversity analysis
+
+```{r}
+ps_strain_filt %>%
+  rarefy_even_depth(rngseed = 123,
+                    sample.size = 3643
+                    # sample.size = 5000
+                    ) %>%
+  subset_samples(owner %in% c("All", "JANINA") & condition_2 %in% c("48h", "control") )-> ILA_enrich
+
+unique(sample.data.frame(ILA_enrich)$sample_name)
+```
+
+```{r}
+noNA = !is.na(tax_table(ILA_enrich)[,"Genus"]) & !is.na(tax_table(ILA_enrich)[,"Species"])
+tax_table(ILA_enrich)[noNA][,"Species"] = paste(tax_table(ILA_enrich)[noNA][,"Genus"], tax_table(ILA_enrich)[noNA][,"Species"])
+ILA_enrich%>%
+  tax_fix()->ILA_enrich
+
+
+
+as.data.frame(tax_table(ILA_enrich))%>%
+  mutate(Species = ifelse(Species == "unknown ", Genus , Species))->tax
+
+
+tax_table(ILA_enrich)<-as.matrix(tax)
+
+
+ILA_enrich%>%
+  subset_samples((condition_tryptophan %in% c("ILA_5") &  condition_2 %in% c("control", "48h"))   )%>%
+  subset_samples(!condition %in% "pectin_mono")%>%
+   microViz::comp_barplot(
+    tax_level = "Genus",
+    label = "condition",
+    sample_order = "default",
+    tax_order = sum, 
+    n_taxa = 10,
+    bar_width = 0.9,
+    tax_transform_for_plot = "compositional") +
+    ylab("Proportion") + 
+    xlab( "")-> p_hist
+
+
+p_hist + 
+  facet_nested(cols=vars(donor_name), drop = TRUE, scales = "free_x", space="free")+
+  theme(text = element_text(size=15),
+        axis.text.x = element_text( angle=90, vjust=0.2, hjust=1, margin=margin(-8,0,0,0)),
+        axis.ticks.x = element_blank(),
+        axis.text.y= element_text(), 
+        axis.title.y = element_text(), 
+        axis.title.x = element_text(),
+        legend.text = element_text(vjust=1, hjust=0, face="italic"),
+        legend.title = element_text(),
+        plot.title = element_text(), panel.spacing = unit(0.2, "cm"),
+        strip.background = element_rect(colour = "white", fill = "white", 
+                                         linetype = "solid")) + 
+  scale_y_continuous(breaks=c(0.25, 0.5, 0.75))+
+  ggtitle("Taxonomic distribution - feces")-> p_hist_ILA
+
+
+
+
+p_hist_ILA
+
+  ggsave(filename = "ILA.jpeg",
+       path =  "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 60,
+       height = 17,
+       units = c("cm"))
+  
+
+```
+
+```{r}
+library(cowplot)
+concentrations<-left_join(read.xlsx( "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240227_Indole_data_calculations.xlsx"),
+                          read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
+  subset(time %in% "48h")%>%
+  subset(stress %in% c("no", "control"))%>%
+  subset(time %in% c("48h"))%>%
+  subset(!donor_name_old %in% "blank")%>%
+  subset(condition_tryptophan %in% c("ILA_5") & stress %in% c("no", "control"))
+
+
+concentrations%>%
+  subset(!condition %in% "pectin_mono")%>%
+  # subset(stress %in% "no" & !donor_name %in% "blank" & !condition %in% "pectin_mono")%>%
+  mutate(condition =factor(condition, levels=c("6C+muc",  "H2O","pectin")))%>%
+   ggplot(aes(y = Indolepropionate_mM,
+             x = condition)) +
+  facet_nested( cols=vars(donor_name), scales="free", space="free") +
+  geom_bar(stat="identity", fill="bisque3", colour="black")+
+  ylab("Indolepropionate [mM]") + xlab(NULL) +
+  theme(text= element_text(size = 15), 
+            axis.text.x = element_text( angle=90, vjust=0.2, hjust=1),
+            legend.text = element_text( hjust=0),
+          # strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA),
+          strip.background = element_blank())+
+  labs(colour="Clusters")+
+ scale_x_discrete(labels = c( "H2O"=expression(paste(H[2]*O)), "pectin"="Pectin"))+
+  scale_alpha_manual(values=c(1, 0.7))+
+  ylab("IPA [mM]")->IPA_ila
+```
+
+```{r}
+plot_grid(p_hist_ILA + theme(axis.ticksx =  element_blank(), 
+                           axis.title.x = element_blank(),
+                           axis.text.x =  element_blank(),
+                           legend.position = "none"
+                        )+  
+            force_panelsizes(rows =unit(3, "cm")),
+          
+             
+          IPA_ila+theme(strip.text = element_blank()
+                              )+  
+            force_panelsizes(rows =unit(1.5, "cm")),
+      
+          
+          
+          nrow=2, 
+        align= "v"
+          )
+
+
+ggsave(filename = paste( "ILA_taxabar.jpeg"),
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 15,
+       height = 25,
+       units = c("cm"))
+```
+
+
+
+
+
+
+
+```{r}
+concentrations<-left_join(read.xlsx( "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240227_Indole_data_calculations.xlsx"),
+                          read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
+  subset(time %in% "48h")%>%
+  subset(stress %in% c("no", "control"))%>%
+  subset(time %in% c("48h"))%>%
+  subset(!donor_name_old %in% "blank")%>%
+  subset(condition_tryptophan %in% c("ILA_5", "ILA_0.5") & stress %in% c("no", "control"))
+
+concentrations[, c("condition", "condition_tryptophan", "donor_name", "Delta_Indolepropionate_mM", "blank_corr")]%>%
+  mutate(donor_name = ifelse(donor_name == "FPEB", "D17", donor_name))%>%
+   mutate(donor_name = ifelse(donor_name == "LEZQ", "D18", donor_name))%>%
+   mutate(donor_name = ifelse(donor_name == "RQCL", "D19", donor_name))%>%
+   mutate(donor_name = ifelse(donor_name == "NXUE", "D20", donor_name))%>%
+   mutate(donor_name = ifelse(donor_name == "RSAL", "D21", donor_name))%>%
+   mutate(donor_name = ifelse(donor_name == "UEGT", "D22", donor_name))-> corelation_metabol
+
+```
+
+
+#####
+```{r}
+ILA_enrich%>%
+  subset_samples((condition_tryptophan %in% c("ILA_5", "ILA_0.5") & 
+                    condition_2 %in% c("control", "48h") )) -> correlation_subset
+
+```
+
+
+##Corelation of abundances and Trp production
+```{r}  
+correlation_subset%>%
+  physeq_glom_rename(
+   
+                     speedyseq = T)%>%
+  microbiome::transform("clr") %>%
+  psmelt()%>%
+  left_join(., corelation_metabol)%>%
+  mutate(ipa_norm = Delta_Indolepropionate_mM/blank_corr)->df_abund 
+
+setNames(aggregate(df_abund$Abundance, by=list(df_abund$OTU, df_abund$donor_name), FUN=mean), c("OTU", "donor_name", "mean"))%>%
+  # subset(OTU %in% "[Eubacterium] eligens group")
+  subset(mean>0)->filter
+
+```
+
+```{r}
+
+#check each donor individually
+correlations<-as.data.frame(matrix(0,0,4))
+colnames(correlations)<-c("OTU", "donor_name", "p_value", "corr")
+
+donor_cond<- unique(df_abund$donor_name)
+
+n=1
+
+for (i in 1:length(donor_cond)){
+  
+  filter%>%
+    subset(donor_name %in% donor_cond[i])->filt_don
+  
+df_abund %>%
+  subset(OTU %in% filt_don$OTU)->df_filt
+
+  
+  df_filt%>%
+    subset(donor_name %in% donor_cond[i])->df_donor
+  
+
+otu_cond<-unique(df_donor$OTU)
+
+for (j in 1:length(otu_cond)){
+  
+    
+    df_donor%>%
+      subset(OTU %in% c(otu_cond[j]))-> corr
+    
+    
+   result<-cor.test( corr[,"ipa_norm"] , corr$Abundance)
+   
+out<-c(otu_cond[j], donor_cond[i], result$p.value, as.data.frame(result$estimate)[1,1])
+
+correlations[n,]<-out
+
+n=n+1
+
+  }}
+
+```
+
+
+
+```{r}
+
+correlations %>%
+  mutate(corr = as.numeric(corr),
+         p_value=as.numeric(p_value))%>%
+  subset(p_value <0.05 & corr > 0.5)%>%
+  left_join(. , as.data.frame(tax_table(ILA_enrich)) %>%
+            rownames_to_column("OTU"))%>%
+  mutate(Genus = as.factor(Genus))->fil_corr
+
+
+
+
+
+frequency<- fil_corr%>%
+  count(Species)%>%
+  setNames( c("Species", "freq"))
+
+
+fil_corr%>%
+  left_join(., frequency)%>%
+  subset(freq >2)%>%
+  mutate(Genus = reorder(Genus, freq))%>%
+  ggplot(aes(x=donor_name, y=Species))+
+   facet_grid(rows=vars(Species), scales = "free", space="free")+
+  geom_point(aes(fill=corr, size=p_value),colour="black", alpha=0.65,  shape=21, width=0.1, height=0.1)+
+  theme(text = element_text(size=15),
+        axis.text.x = element_text(angle = 90, vjust=0.5),
+        axis.text.y= element_text(face="italic"),
+        axis.ticks.y = element_blank(),
+        axis.title=element_blank(),
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA),
+        strip.text.y= element_blank(),
+        # panel.spacing = unit(0, "lines"),
+        strip.background = element_blank())+
+  scale_size_continuous(range = c(5, 1)) +
+  scale_fill_gradientn(colors = c(  "white", "cyan4"), values = rescale(c( -1, 0, 1)))+
+  # geom_hline(yintercept = c(1.5,2.5,3.5, 4.5,5.5, 6.5, 7.5,8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5, 22.5, 23.5, 24.5, 25.5, 26.5, 27.5, 28.5),  colour="grey", linetype="dashed", alpha=.5, size=0.5)+
+  labs(fill="R", size="P-value")
+
+
+ggsave(filename = "correlating_taxa_ILA..jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 11,
+       height = 5,
+       units = c("cm"))
+```
+
+
+```{r}
+fil_corr%>%
+  left_join(., frequency)%>%
+  filter(freq >2)%>%
+  left_join(.,  as.data.frame(tax_table(ILA_enrich)) %>%
+            rownames_to_column("OTU"))%>%
+ mutate(corr = as.numeric(corr),
+         p_value=as.numeric(p_value))%>%
+  subset(p_value <0.05 & corr > 0.5) %>%
+  left_join(., as.data.frame(refseq(ILA_enrich)) %>% rownames_to_column("OTU"))->IPA_correlations
+
+
+
+
+write.xlsx(unique(IPA_correlations[,c("OTU", "Species", "x")])
+             , 
+           "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/ILA_ipa_corr.xlsx")
+
+
+df_abund%>%
+  subset(Genus %in% "Monoglobus")->sub
+
+unique(sub$OTU)
+ 
+```
+
+
+
+
+
+
+
+
+
+
+##############old
+
+
+```{r}
+ILA_enrich%>%
+  subset_samples((condition_tryptophan %in% c("ILA_5", "ILA_0.5") | condition_tryptophan %in% c("no_trp")))%>%
+  subset_samples(condition %in% c("6C+muc", "H2O"))%>%
+  subset_samples(!condition_2 %in% c("O2", "H2O2", "96h"))->correlation_subset
+
+as.data.frame(t(otu_table(correlation_subset)))%>%
+  rownames_to_column("test")->otu
+
+as.data.frame(t(otu_table(correlation_subset)))%>%
+  rownames_to_column("no_trp")->otu_no_trp
+
+
+```
+
+```{r}
+#alpha diversity
+correlation_subset %>%
+  phyloseq_alphas(phylo = TRUE)%>%
+  left_join(., cluster)-> alphas
+
+alphas%>%
+  mutate(donor_name = reorder(donor_name, observed))%>%
+ ggplot(aes(x = donor_name,
+             y = observed)) +
+  # facet_grid(scale="free", space="free_x", cols=vars(sample_type)) +
+  geom_boxplot(aes(fill=donor_name), outlier.shape = NA) +
+  geom_point(aes(colour =condition_tryptophan), alpha=0.75,   size = 2)+
+  ylab("Observed ASVs") + xlab(NULL) +
+  theme(axis.text.y= element_text(size = 20), 
+            axis.title.y = element_text(size=20), 
+            axis.title.x = element_text(size=20),
+            axis.text.x = element_text(size=20, angle=90, vjust=0.2, hjust=1),
+            legend.text = element_text(size = 20),
+            legend.title = element_text(size= 20),
+            plot.title = element_text(size=20),
+          strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA))+
+  ggtitle("Alpha diversity")+
+  scale_x_discrete(labels = c('feces' = 'Feces', '7C' = '6C+Muc', '3C+Muc' = '3C+Muc', "Nut"="Nut", "SS"="SS", "7C-Muc"="6C", "3C"="3C", "H2O"=expression(paste(H[2]*O)), "Glc"="Glucose"))
+
+```
+###correlation
+
+```{r}
+
+```
+
+
+####blank corrected correlations
+
+
+```{r}
+# rbind(
+  rbind(rbind(sample.data.frame(correlation_subset)[, c("sample_name", "condition","condition_tryptophan", "donor_name")]%>%
+  subset(condition %in% "6C+muc")%>%
+  subset(condition_tryptophan %in% c("no_trp", "ILA_5"))%>%
+  pivot_wider(names_from = condition_tryptophan, values_from = sample_name)%>%
+  mutate(condition_tryptophan = "ILA_5")%>%
+  mutate(test = ILA_5) %>%
+  select(-ILA_5),
+
+sample.data.frame(correlation_subset)[, c("sample_name", "condition","condition_tryptophan", "donor_name")]%>%
+  subset(condition %in% "H2O")%>%
+  subset(condition_tryptophan %in% c("no_trp", "ILA_5"))%>%
+  pivot_wider(names_from = condition_tryptophan, values_from = sample_name)%>%
+  mutate(condition_tryptophan = "ILA_5")%>%
+  mutate(test = ILA_5) %>%
+  select(-ILA_5)),
+
+sample.data.frame(correlation_subset)[, c("sample_name", "condition","condition_tryptophan", "donor_name")]%>%
+  subset(condition %in% "6C+muc")%>%
+  subset(condition_tryptophan %in% c("no_trp", "ILA_0.5"))%>%
+  pivot_wider(names_from = condition_tryptophan, values_from = sample_name)%>%
+  mutate(condition_tryptophan = "ILA_0.5")%>%
+  mutate(test = ILA_0.5) %>%
+  select(-ILA_0.5)
+
+)->df
+
+length(unique(df$test))
+```
+
+```{r}
+left_join(df, otu)->trp
+left_join(df, otu_no_trp)-> no_trp
+```
+
+
+
+
+```{r}
+diff<- trp[,-c(1:5)] - no_trp[,-c(1:5)]
+
+cbind( df[,-c(1:4)], diff)%>%
+  column_to_rownames("test")%>%
+  t()->otu_diff
+  
+otu_diff[otu_diff < 0]<-0
+
+```
+
+# Make phyloseq
+```{r}
+##
+meta_diff<-left_join(df%>%
+    select(-no_trp), concentrations%>%
+    subset(time %in% "48h"))%>%
+  mutate(norm_ipa = Delta_Indolepropionate_mM/blank_corr)%>%
+  mutate(sample_name = test)%>%
+  column_to_rownames("test")
+meta_diff<-meta_diff[, c("sample_name", "condition","donor_name", "condition_tryptophan", "Delta_Indolepropionate_mM", "norm_ipa")  ]
+
+###
+ref<-refseq(correlation_subset)
+
+tax<-tax_table(correlation_subset)
+
+ILA_diff<-merge_phyloseq(ref,
+                         sample_data(meta_diff), 
+                         otu_table(otu_diff, taxa_are_rows = T),
+                         tax)
+
+# noNA = !is.na(tax_table(ILA_diff)[,"Genus"]) & !is.na(tax_table(ILA_diff)[,"Species"])
+# tax_table(ILA_diff)[noNA][,"Species"] = paste(tax_table(ILA_diff)[noNA][,"Genus"], tax_table(ILA_diff)[noNA][,"Species"])
+# ILA_diff%>%
+#   tax_fix()->ILA_diff
+```
+
+```{r}
+ILA_diff%>%
+  physeq_glom_rename( speedyseq = T)%>%
+  microbiome::transform("clr") %>%
+  psmelt()->df_abund 
+
+df_abund%>%
+  subset(Genus %in% "Megasphaera")
+
+setNames(aggregate(df_abund$Abundance, by=list(df_abund$OTU, df_abund$donor_name), FUN=mean), c("OTU", "donor_name", "mean"))%>%
+  subset(mean > 0)->filter
+```
+
+
+
+```{r}
+#check each donor individually
+correlations_ILA<-as.data.frame(matrix(0,0,4))
+colnames(correlations_ILA)<-c("OTU", "donor_name", "p_value", "corr")
+
+donor_cond<- unique(df_abund$donor_name)
+
+
+n=1
+
+for (i in 1:length(donor_cond)){
+  
+  filter%>%
+    subset(donor_name %in% donor_cond[i])->filt_don
+  
+df_abund %>%
+  subset(OTU %in% filt_don$OTU)->df_filt
+
+  
+  df_filt%>%
+    subset(donor_name %in% donor_cond[i])->df_donor
+  
+
+otu_cond<-unique(df_donor$OTU)
+
+for (j in 1:length(otu_cond)){
+    
+    df_donor%>%
+      subset(OTU %in% c(otu_cond[j]))-> corr
+    
+if (max(corr[,c("Delta_Indolepropionate_mM")])>0.03)    {  
+   result<-cor.test( corr[,c("Delta_Indolepropionate_mM")] , corr$Abundance)
+   
+out<-c(otu_cond[j], donor_cond[i], result$p.value, as.data.frame(result$estimate)[1,1])
+
+correlations_ILA[n,]<-out
+
+n=n+1
+
+  }}}
+
+
+```
+
+```{r}
+left_join(correlations_ILA, as.data.frame(tax)%>%rownames_to_column("OTU"))%>%
+  mutate(corr = as.numeric(corr))%>%
+  mutate(p_value = as.numeric(p_value))%>%
+  subset((p_value < 0.05 & corr > 0) | corr > 0.9)->corr_diff
+
+
+```
+
+
+```{r}
+facet_labeller <- function(variable,value){
+  return(names[value])}
+
+names <- list("Indole"= "Indole", 
+              "Indoleacetate"="IA",
+              "Indolelactate"="ILA", 
+              "Indolepropionate"= "IPA")
+
+# left_join(correlations_ILA_conc_filtered, tax)%>%
+#    subset(OTU %in% c(fil_corr$OTU))%>%
+
+left_join(correlations_ILA %>%
+            subset(OTU %in% corr_diff$OTU),
+          as.data.frame(tax)%>%
+            rownames_to_column("OTU"))%>%
+  mutate(corr = as.numeric(corr),
+         p_value = as.numeric(p_value))%>%
+  filter((p_value < 0.05 & corr > 0))-> corr_ila
+
+corr_ila%>%
+  mutate(OTU = reorder(OTU, corr))%>%
+  ggplot(aes(x=donor_name, y=Species))+
+  geom_jitter(aes(fill=corr, size=p_value),colour="black", alpha=0.75,  shape=21, width=0.001)+
+  facet_grid(rows=vars(Species), space="free", scales="free")+
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5),
+        axis.text.y= element_text(face="italic"),
+        axis.title=element_blank(),
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA),
+        strip.text.y= element_blank())+
+   scale_size_continuous(range = c(6, 3), breaks = c(0.1 , 0.05, 0.025, 0.01),  name= "P-value") +
+  # scale_size_manual(values = c("sig" = 6, "non_sig" = 3)) +
+  scale_fill_gradientn(colors = c("white", "cyan4"), values = rescale(c(0, 1)), limits = c(0,1), breaks = c(0, 0.5, 1), name="R")
+
+
+ggsave(filename = "correlating_taxa_responders_strain..jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 10,
+       height = 10,
+       units = c("cm"))
+```
+
+
+
+```{r}
+corr_ila%>%
+  subset(Species %in% "Lachnospiraceae Family")->sub
+
+unique(sub$OTU)
+
+print(as.data.frame(phylo_test@refseq[c(unique(sub$OTU)),])$x)
+```
+
+
+
+
+
+```{r}
+df_abund%>%
+  subset(OTU %in% corr_diff$OTU)%>%
+  mutate(name = paste(Species, OTU))%>%
+  ggplot(aes(y=Delta_Indolepropionate_mM, x=Abundance))+
+  # geom_point(aes(colour=donor_name, shape=condition_tryptophan))+
+  facet_wrap("name")+
+  geom_line(aes(colour=donor_name))
+ 
+   ggsave(filename = "line_ILA.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 20,
+       height = 16.3,
+       units = c("cm"))
+   
+```
+
+
+```{r}
+#check each donor individually
+correlations_ILA<-as.data.frame(matrix(0,0,3))
+colnames(correlations_ILA)<-c("OTU",  "p_value", "corr")
+
+donor_cond<- unique(df_abund$donor_name)
+
+n=1
+
+# for (i in 1:length(donor_cond)){
+#   
+#   filter%>%
+#     subset(donor_name %in% donor_cond[i])->filt_don
+#   
+# df_abund %>%
+#   subset(OTU %in% filt_don$OTU)->df_filt
+# 
+#   
+#   df_filt%>%
+#     subset(donor_name %in% donor_cond[i])->df_donor
+  
+
+otu_cond<-unique(df_abund$OTU)
+
+for (j in 1:length(otu_cond)){
+    
+    df_abund%>%
+      subset(OTU %in% c(otu_cond[j]))-> corr
+    
+if (max(corr[,c("Delta_Indolepropionate_mM")])>0.03)    {  
+   result<-cor.test( corr[,c("Delta_Indolepropionate_mM")] , corr$Abundance)
+   
+out<-c(otu_cond[j],  result$p.value, as.data.frame(result$estimate)[1,1])
+
+correlations_ILA[n,]<-out
+
+n=n+1
+
+  }}
+
+
+
+```
+
+```{r}
+left_join(correlations_ILA, as.data.frame(tax)%>%rownames_to_column("OTU"))%>%
+  mutate(corr = as.numeric(corr))%>%
+  mutate(p_value = as.numeric(p_value))%>%
+  subset((p_value < 0.05 & corr > 0) | corr > 0.9)->corr_diff
+
+
+```
+
+
+```{r}
+facet_labeller <- function(variable,value){
+  return(names[value])}
+
+names <- list("Indole"= "Indole", 
+              "Indoleacetate"="IA",
+              "Indolelactate"="ILA", 
+              "Indolepropionate"= "IPA")
+
+# left_join(correlations_ILA_conc_filtered, tax)%>%
+#    subset(OTU %in% c(fil_corr$OTU))%>%
+
+left_join(correlations_ILA %>%
+            subset(OTU %in% corr_diff$OTU),
+          as.data.frame(tax)%>%
+            rownames_to_column("OTU"))%>%
+  mutate(corr = as.numeric(corr),
+         p_value = as.numeric(p_value))%>%
+  filter((p_value < 0.05 & corr > 0))%>%
+  mutate(OTU = reorder(OTU, corr))%>%
+  ggplot(aes(x=1, y=Species))+
+  geom_jitter(aes(fill=corr, size=p_value),colour="black", alpha=0.75,  shape=21, width=0.001)+
+  facet_grid(rows=vars(Species), space="free", scales="free")+
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5),
+        axis.text.y= element_text(face="italic"),
+        axis.title=element_blank(),
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA),
+        strip.text.y= element_blank())+
+   scale_size_continuous(range = c(6, 3), breaks = c(0.1 , 0.05, 0.025, 0.01),  name= "P-value") +
+  # scale_size_manual(values = c("sig" = 6, "non_sig" = 3)) +
+  scale_fill_gradientn(colors = c("white", "cyan4"), values = rescale(c(0, 1)), limits = c(0,1), breaks = c(0, 0.5, 1), name="R")
+
+
+ggsave(filename = "correlating_taxa_responders_strain..jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 10,
+       height = 10,
+       units = c("cm"))
+```
+
+
+```{r}
+
+
+as.data.frame(ref)[c( "ASV0289"), ]
+```
+
+```{r}
+
+ASVs<-c( "ASV0479", "ASV0427", #intestinimonas
+         "ASV0056","ASV0341"	,"ASV0296"	,"ASV0247",	"ASV0141"	,"ASV0883"	,	"ASV0099",	#enterocloster
+         "ASV0060"	,	"ASV0155"	,"ASV0036"	,"ASV0127", #meldeseni
+         "ASV0041", #bsymb
+         "ASV0058", #catus
+         "ASV0049", "ASV0494", "ASV0733", "ASV0732",
+         "ASV0364", "ASV0269", "ASV0143", "ASV0141", "ASV0973"
+         )
+
+enterocloster<-c("ASV0056"	,"ASV0247")
+
+ILA_enrich%>%
+    subset_samples((condition_tryptophan %in% c("ILA_5") &  condition_2 %in% c("control", "48h"))  )%>%
+  # subset_samples(!condition %in% "pectin_mono")%>%
+  physeq_glom_rename( 
+    # taxrank= "Species", 
+                      speedyseq = T)%>%
+  microbiome::transform("clr") %>%
+  psmelt()%>%
+  subset(OTU %in% c(ASVs
+                    ))%>%
+  left_join(., concentrations) %>%
+  mutate(norm_ipa = Indolepropionate_mM/blank_corr)%>%
+# ->sub
+
+
+# setNames(aggregate(sub$Abundance, by=list(sub$donor_name, sub$condition, sub$norm_ipa), FUN=sum), c("donor_name", "condition", "norm_ipa", "Abundance"))%>%
+  ggplot(aes(x=Abundance, y=norm_ipa))+
+    geom_point(aes(colour=donor_name))+
+  geom_line(aes(colour=donor_name))+
+  facet_wrap(vars( OTU))+
+  stat_poly_line(color="darkgrey") +
+ stat_correlation(mapping = use_label(c("R", "P")), size=8)
+
+
+ILA_enrich%>%
+    subset_samples((condition_tryptophan %in% c("ILA_5") &  condition_2 %in% c("control", "48h"))  | 
+                   (condition_tryptophan %in% c("no_trp") &  condition_2 %in% c("control", "48h")))%>%
+  # subset_samples(!condition %in% "pectin_mono")%>%
+  physeq_glom_rename( 
+    # taxrank= "Species", 
+                      speedyseq = T)%>%
+  microbiome::transform("clr") %>%
+  psmelt()%>%
+  subset(OTU %in% c("ASV0056", "ASV0341", "ASV0296", "ASV0247", "ASV0348", "ASV0311", "ASV0141", "ASV0049", "ASV0494", "ASV0733", "ASV0733", 
+                    "ASV0364", "ASV0269", "ASV0143", "ASV0141", "ASV0973"
+                    ))%>%
+  left_join(., concentrations) %>%
+  mutate(norm_ipa = Indolepropionate_mM/blank_corr)%>%
+  ggplot(aes(y=Abundance, x=donor_name))+
+  geom_boxplot(aes(fill=condition_tryptophan))+
+    geom_point(aes(colour=condition_tryptophan, shape=condition), position = position_dodge(1))+
+  facet_grid(cols=vars(Species))
+
+
+
+
+as.data.frame(ILA_enrich@tax_table)%>% subset(Class %in% "Clostridia")
+```
+
+
+### OX stress
+
+```{r}
+ps_strain_filt %>%
+  rarefy_even_depth(rngseed = 123,
+                    sample.size = 3643
+                    # sample.size = 5000
+                    ) %>%
+  subset_samples(owner %in% c("All", "JANINA") & condition_2 %in% c("O2","H2O2", "control") )-> ILA_enrich
+```
+

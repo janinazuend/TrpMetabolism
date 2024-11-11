@@ -1,0 +1,402 @@
+```{r setup, echo =FALSE}
+.libPaths('C:\\Users\\zuendj\\Documents\\R4Libs')
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "P:/Shared_documents/Serafina PlÃ¼ss/20230320_sequencing_results/Janina", cho = TRUE, warning = FALSE, message = FALSE)
+# devtools::install_github("tidyverse/tidyverse")
+library(tidyverse)
+library(openxlsx)
+library(ggh4x)
+library(microViz)
+library(ggpmisc)
+library(ggpubr)
+library(rstatix)
+library(scales)
+```
+
+```{r, echo =FALSE}
+source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_taxa_tests.R")
+source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_normalisation.R")
+source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_alpha.R")
+source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_beta.R")
+source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_heatmap.R")
+source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_taxa_tests.R")
+source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_varia.R")
+source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_beta.R")
+source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/functions.R")
+source("https://raw.githubusercontent.com/fconstancias/metabarcodingRpipeline/dev/scripts/functions_export_simplified.R")
+
+#get metadata file: load this function
+sample.data.frame <- function(ps) {
+  return(as(phyloseq::sample_data(ps), "data.frame"))}
+
+facet_labeller <- function(variable,value){
+  return(names[value])}
+```
+
+## Load Phyloseq
+#this phyloseq already contains metabolic data in the metadata table @ we have to first link the metabolites to the metadata
+```{r}
+Trp_rare <-readRDS("C:/Users/zuendj/Desktop/03_data R/wp3/input/Trp_rare.RDS")
+```
+
+```{r}
+meta_trp<-sample.data.frame(Trp_rare)
+```
+
+##Corelation of abundances and Trp production
+```{r}  
+## get the clr abundance into a new data frame
+##taxrank to be defined
+Trp_rare%>%
+  physeq_glom_rename(
+    # taxrank="Species",
+                     speedyseq = T)%>% 
+  microbiome::transform("clr") %>%
+  subset_samples(tryptophan %in% c("Trp"))%>%
+  psmelt()->df_abund 
+
+
+#get the mean abundace per donor and OTU for filtering @bp - this you will not do likely?! 
+setNames(aggregate(df_abund$Abundance, by=list(df_abund$OTU, df_abund$donor_name), FUN=mean), c("OTU", "donor_name", "mean"))%>%
+  # subset(OTU %in% "[Eubacterium] eligens group")
+  subset(mean>0)->filter
+
+```
+## Corelation analysis
+```{r}
+#check each donor individually => donor-individual correlation
+
+##step 1. create a data frame for results
+correlations<-as.data.frame(matrix(0,0,5))
+colnames(correlations)<-c("OTU", "donor_name", "p_value", "corr", "metabolite")
+
+
+#step 2. define all donors & metabolites to be looped over 
+donor_cond<- c("SEEQ", "XNMN", "JCDD", "GWDF", "HTKE", "JBJW", "AVCW", "BXDM", "KTRS", "EAJK", "YQRV", "TPSJ", "HXBH", "GCVJ", "YFKF", "FNNW")
+indole_cond<-c("Indole", "Indolepropionate", "Indolelactate", "Tryptamine", "Indoleacetate")
+n=1
+
+# step 3. loop over all donors & metabolites & ASVs
+for (i in 1:length(donor_cond)){
+  
+#subset donor => @bp - this you will not do likely?!
+filter%>%
+    subset(donor_name %in% donor_cond[i])->filt_don
+#filter  
+df_abund %>%
+  subset(OTU %in% filt_don$OTU)->df_filt
+
+#subset donor => @bp - this you will not do likely?!
+  df_filt%>%
+    subset(donor_name %in% donor_cond[i])->df_donor
+  
+
+otu_cond<-unique(df_donor$OTU)
+
+for (j in 1:length(otu_cond)){ #loop over all OTUs
+  for(x in 1:length(indole_cond)){
+    
+    df_donor%>% 
+      subset(OTU %in% c(otu_cond[j]))-> corr
+    
+    ### corraltion calculation - put results into a new variable
+   result<-cor.test( corr[,indole_cond[x]] , corr$Abundance)
+   
+   
+#store all results and conditions etc. in a new vector 
+out<-c(otu_cond[j], donor_cond[i], result$p.value, as.data.frame(result$estimate)[1,1], indole_cond[x])
+
+#add result vector to result data frame
+correlations[n,]<-out
+
+n=n+1
+
+  }}}
+
+```
+##Filtering
+## i added some filtering steps: only significant correlations with metabolite concentrations that were higher tha 0.03 mM were further analyzed @bp you can skip
+```{r}
+
+df_abund %>%
+   gather(metabolite, conc, "Tryptophan":"Tryptamine")->df_long
+
+setNames(aggregate(df_long$conc, by=list(df_long$donor_name, df_long$metabolite), FUN="max"), c("donor_name", "metabolite", "conc"))
+
+left_join(correlations, setNames(aggregate(df_long$conc, by=list(df_long$donor_name, df_long$metabolite), FUN="max"), c("donor_name", "metabolite", "conc")))%>%
+  mutate(p_value = ifelse((conc > 0 & conc <0.03), 0.06, p_value))-> correlations_conc_filtered ### that's the filtered data frame
+
+correlations_conc_filtered->corr_donor
+```
+
+## Figure
+```{r}
+# thats a function to label the facets of the ggplot nicely @bp you can skip
+facet_labeller <- function(variable,value){
+  return(names[value])}
+
+
+#names for the facets of the ggplot @bp you can skip
+names <- list("Indolepropionate"= "IPA",
+              "Indolelactate"="ILA", 
+              "Indoleacetate"="IA",
+              "Indole"= "Indole", 
+              "Tryptamine"="Tryptamine")
+
+#selection of significant correlations & only correlations that were found in more that 3 donors => @bp you can skip
+correlations_conc_filtered%>%
+  mutate(corr = as.numeric(corr),
+         p_value=as.numeric(p_value))%>%
+  subset(p_value <0.05 & corr > 0.5)%>%
+  group_by( metabolite, OTU) %>% # Group by donor_name, metabolite, and OTU
+  filter(n() >= 3) %>% # Keep only groups with at least 3 entries
+  ungroup()->fil_corr
+
+
+
+
+# link the tax table so that we have full taxonomic classification
+left_join(correlations_conc_filtered, as.data.frame(tax_table(Trp_rare)) %>% 
+            rownames_to_column("OTU"))%>%
+   subset(OTU %in% c(fil_corr$OTU))%>%
+  mutate(corr = as.numeric(corr),
+         p_value=as.numeric(p_value))%>%
+   subset(p_value < 0.05)->sig
+
+frequency <- sig$Species %>%
+  table() %>%
+  as.data.frame() %>%
+  setNames(c("Species", "freq"))
+
+
+left_join(sig, frequency)%>%
+  mutate(metabolite = factor(metabolite, levels=c("Indolepropionate", "Indolelactate", "Indoleacetate", "Indole", "Tryptamine")))%>%
+  mutate(Species = ifelse(Species == "Lachnospiraceae NK4A136 group bacterium", "Lachnospiraceae NK4A136", Species))%>% # @bp you can skip
+  mutate(Species = ifelse(Species == "Faecalibacterium unknown", "Faecalibacterium", Species))%>% #@bp you can skip
+   mutate(Species = reorder(Species, freq))%>% # order base on the number of frequency of correlation fo one specific OTU
+ 
+#change names in case you want @bp you can skip
+  mutate(donor_name = ifelse(donor_name == "XNMN", "D1", donor_name))%>%
+   mutate(donor_name = ifelse(donor_name == "SEEQ", "D2", donor_name))%>%
+   mutate(donor_name =                 ifelse(donor_name == "HTKE", "D3",donor_name))%>%
+   mutate(donor_name =                 ifelse(donor_name == "GWDF", "D4",donor_name))%>%
+    mutate(donor_name =                ifelse(donor_name == "JCDD", "D5",donor_name))%>%
+    mutate(donor_name =                ifelse(donor_name == "BXDM", "D6",donor_name))%>%
+     mutate(donor_name =               ifelse(donor_name == "JBJW", "D7",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "AVCW", "D8",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "FNNW", "D9",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "GCVJ", "D10",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "HXBH", "D11",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "TPSJ", "D12",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "YFKF", "D13",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "EAJK", "D14",donor_name))%>%
+        mutate(donor_name =            ifelse(donor_name == "KTRS", "D15",donor_name))%>%
+        mutate(donor_name =            ifelse(donor_name == "YQRV", "D16", donor_name))%>%
+
+    mutate(donor_name = factor(donor_name, levels =c("D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14", "D15", "D16")
+))%>%
+  
+  ### let's do a plot !! 
+  ggplot(aes(x=donor_name, y=Species))+
+  geom_point(aes(fill=corr, size=p_value),colour="black", alpha=0.75,  shape=21, width=0.1, height=0.1)+ 
+  facet_grid(col=vars(metabolite),  space="free", scales="free", labeller=facet_labeller)+
+  theme(text = element_text(size=15),
+          axis.text.x = element_text(angle = 90, vjust=0.5),
+        axis.text.y= element_text(face="italic"),
+        axis.ticks.y = element_blank(),
+        axis.title=element_blank(),
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA),
+        # legend.position = "bottom",
+        legend.title = element_text(size=15),
+        # strip.text.y= element_blank(),
+        # panel.spacing = unit(0, "lines"),
+        strip.background = element_blank())+
+  scale_size_continuous(range = c(5, 1), name="P-value") +
+  scale_fill_gradientn(colors = c("indianred",  "white", "cyan4"), values = rescale(c( -1, 0, 1)), name="R")+
+  geom_hline(yintercept = c(1.5,2.5,3.5, 4.5, 6.5, 7.5,8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5),  colour="grey", linetype="dashed", alpha=.5) # @bp you can skip
+
+
+ggsave(filename = "correlating_taxa_responders_ASVs..jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 25,
+       height = 10,
+       units = c("cm"))
+```
+
+
+# highlight correaltion for specififc taxa & donors?? @bp you can skip
+
+```{r}
+Trp_rare%>%
+  physeq_glom_rename( speedyseq = T)%>%
+  microbiome::transform("clr") %>% 
+  psmelt()%>%
+    mutate(donor_name = ifelse(donor_name == "XNMN", "D1", donor_name))%>%
+   mutate(donor_name = ifelse(donor_name == "SEEQ", "D2", donor_name))%>%
+   mutate(donor_name =                 ifelse(donor_name == "HTKE", "D3",donor_name))%>%
+   mutate(donor_name =                 ifelse(donor_name == "GWDF", "D4",donor_name))%>%
+    mutate(donor_name =                ifelse(donor_name == "JCDD", "D5",donor_name))%>%
+    mutate(donor_name =                ifelse(donor_name == "BXDM", "D6",donor_name))%>%
+     mutate(donor_name =               ifelse(donor_name == "JBJW", "D7",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "AVCW", "D8",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "FNNW", "D9",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "GCVJ", "D10",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "HXBH", "D11",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "TPSJ", "D12",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "YFKF", "D13",donor_name))%>%
+       mutate(donor_name =             ifelse(donor_name == "EAJK", "D14",donor_name))%>%
+        mutate(donor_name =            ifelse(donor_name == "KTRS", "D15",donor_name))%>%
+        mutate(donor_name =            ifelse(donor_name == "YQRV", "D16", donor_name))%>%
+
+    mutate(donor_name = factor(donor_name, levels =c("D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14", "D15", "D16")
+))%>%
+  subset(OTU %in% sig$OTU)%>%
+  subset(tryptophan %in% "Trp")%>%
+  subset(Species %in% c( "Lachnospira pectinoschiza"))%>%
+  # subset(Genus %in% c("[Eubacterium] eligens group"))%>%
+  mutate(reductive_pathway = 1000 * (Indolepropionate + Indolelactate))%>%
+  mutate(substrate = factor(substrate, levels=c( "H2O","SS"  , "XY" ,  "Nut" , "AG"  ,   "IN"  , "bGlc" ,"PE" ,  "Pea")))%>%
+  ggplot(aes(y=Abundance, x=reductive_pathway))+
+  # geom_jitter(aes(colour=donor_name))+
+  # geom_boxplot()+
+  geom_hline(yintercept = 0, linetype="dashed", colour="grey")+
+  geom_vline(xintercept = 0.0, linetype="dashed", colour="grey")+
+  
+  
+  geom_point(aes(colour=substrate, shape =OTU))+
+  stat_poly_line(color="darkgrey") +
+  stat_correlation(mapping = use_label(c("R", "P")), size=4)+
+  facet_wrap(vars(donor_name))+
+  xlab(expression(Reductive~metabolites~"["*mu*"M]"))+ylab("Clr-abundance")+labs(shape="ASV")+
+   scale_colour_manual(values  =  c("grey","#1f78b4", "#33a02c", "#e31a1c", "#ff7f00", "#a6cee3", "#b2df8a", "#fb9a99", "#fdbf6f"), name= "Substrate", labels = c("H2O"=expression(paste(H[2]*O))))+
+  theme(text = element_text(size=15) ,
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA),
+        strip.background = element_blank(),
+        legend.text = element_text(hjust=0),
+        axis.text.x =  element_text(angle=90),
+        plot.title = element_text(face="italic"))+
+   ggtitle("Lachnospira pectinoschiza")
+  # ggtitle("[Eubacterium] eligens group")
+
+ggsave(filename = "pectino_taxa.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 21,
+       height = 15,
+       units = c("cm"))
+
+```
+
+## Differential Abundance Pectin
+
+```{r, echo=FALSE}
+library(mia)
+library(miaViz)
+library(ALDEx2)
+```
+
+
+
+```{r}
+
+Trp_filtered <-readRDS("C:/Users/zuendj/Desktop/03_data R/wp3/input/Trp_filtered.RDS")
+tse_C <- enetros %>% agglomerateByRank(rank = "Family")
+```
+
+###Aldex: NO Prevalence filter-> filter later with abundance
+```{r}
+
+substrates <-c("7C",
+               "3C+Muc",
+               "7C-Muc" ,
+               "3C" ,
+               "SS" ,
+               "Nut" ,
+               "Glc" ,
+               "H2O" )
+
+
+all_C <-data.frame(matrix(ncol=14, nrow=0))
+
+for (i in (1:length(substrates))){
+  tse_substrates <-tse_C[ , tse_C$condition %in% c(substrates[i], "feces")]
+  
+      result_name <- paste(substrates[i])
+      print(result_name)
+      
+      count <- as.vector(tse_substrates$condition) 
+      x <- aldex.clr(
+      reads = assay(tse_substrates),
+     tse_substrates$condition)
+    # calculates expected values of the Welch's t-test and Wilcoxon rank test on
+    # the data returned by aldex.clr
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      # determines the median clr abundance of the feature in all samples and in
+      # groups, the median difference between the two groups, the median variation
+      # within each group and the effect size, which is the median of the ratio
+      # of the between group difference and the larger of the variance within groups
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      # combine all outputs 
+      
+      aldex_out <- data.frame(x_tt, x_effect)
+      
+      
+      
+      result <-aldex_out
+      result[,14] <- result_name
+      print(colnames(result))
+      
+      names(result)[6]<-paste0("rab.win.feces")
+      names(result)[7]<-paste0("rab.win.cultures")
+      result$Family<-row.names(result)
+      
+      all_C <- rbind(all_C, result)
+                                    
+      }
+
+all_C %>%
+  subset(Family %in% "Family:Enterobacteriaceae")%>%
+  filter(we.ep < 0.05)->out
+```
+
+```{r}
+unloadNamespace("miaViz")
+unloadNamespace("mia")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

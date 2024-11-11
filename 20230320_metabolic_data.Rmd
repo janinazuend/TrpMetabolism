@@ -1,0 +1,634 @@
+```{r setup, echo =FALSE}
+.libPaths('C:\\Users\\zuendj\\Documents\\R4Libs')
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "P:/Shared_documents/Serafina PlÃ¼ss/20230320_sequencing_results/Janina", cho = TRUE, warning = FALSE, message = FALSE)
+# devtools::install_github("tidyverse/tidyverse")
+library(tidyverse)
+library(openxlsx)
+library(ggh4x)
+library(microViz)
+library(ggpmisc)
+library(ggpubr)
+library(rstatix)
+library(scales)
+library(cowplot)
+library(ggnewscale)
+
+```
+
+```{r, echo =FALSE}
+# source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_taxa_tests.R") 
+# source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_normalisation.R") 
+# source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_alpha.R") 
+# source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_beta.R") 
+# source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_heatmap.R")
+# source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_taxa_tests.R")
+# source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_varia.R")
+# source("C:/Users/zuendj/Desktop/03_data R/divcom_functions/R/phyloseq_beta.R")
+
+#get metadata file: load this function
+sample.data.frame <- function(ps) {
+  return(as(phyloseq::sample_data(ps), "data.frame"))}
+
+facet_labeller <- function(variable,value){
+  return(names[value])}
+```
+
+## Load Phyloseq
+```{r}
+Trp_rare <-readRDS("C:/Users/zuendj/Desktop/03_data R/wp3/input/Trp_rare.RDS")
+```
+
+```{r}
+meta_trp<-sample.data.frame(Trp_rare)%>% subset(tryptophan %in% "Trp")
+```
+
+```{r}
+meta_trp%>%
+  gather(metabolite, conc, "Indolelactate": "Tryptamine")%>%
+  filter(conc > 0.0025)->sub
+
+left_join(setNames(aggregate(sub$conc, by=list(sub$metabolite), FUN = function(x) round(mean(x), 3)), c("metabolite", "mean")), setNames(aggregate(sub$conc, by=list(sub$metabolite), FUN = function(x) round(sd(x), 3)), c("metabolite", "sd")))%>%
+  left_join(., setNames(aggregate(sub$conc, by=list(sub$metabolite), FUN = function(x) round(max(x), 3)), c("metabolite", "max")) )
+
+left_join(setNames(aggregate(sub$conc, by=list(sub$metabolite, sub$donor_name), FUN = function(x) round(mean(x), 3)), c("metabolite", "donor_name", "mean")), setNames(aggregate(sub$conc, by=list(sub$metabolite, sub$donor_name), FUN = function(x) round(sd(x), 3)), c("metabolite","donor_name", "sd")))%>%
+  left_join(., setNames(aggregate(sub$conc, by=list(sub$metabolite, sub$donor_name), FUN = function(x) round(max(x), 3)), c("metabolite", "donor_name", "max")) ) %>%
+subset(metabolite %in% "Tryptamine")
+
+left_join(setNames(aggregate(sub$conc, by=list(sub$metabolite, sub$substrate, sub$donor_name), FUN = function(x) round(mean(x), 3)), c("metabolite", "substrate","donor_name",  "mean")), 
+          setNames(aggregate(sub$conc, by=list(sub$metabolite, sub$substrate, sub$donor_name), FUN = function(x) round(sd(x), 3)), c("metabolite","substrate","donor_name", "sd")))%>%
+  left_join(., setNames(aggregate(sub$conc, by=list(sub$metabolite, sub$substrate, sub$donor_name), FUN = function(x) round(min(x), 3)), c("metabolite", "substrate","donor_name", "min")) ) %>%
+subset(metabolite %in% "Indolepropionate")->ipa
+
+max(ipa$mean)
+
+sub%>%
+  subset(metabolite %in% "Tryptamine" & substrate %in% "SS")
+
+```
+
+
+```{r}
+meta_trp%>%
+  gather(metabolite, conc, "Indolelactate": "Tryptamine")%>%
+  filter(conc > 0)%>%
+  mutate(id = paste(donor_name, substrate))->sub
+
+left_join(sub, setNames(aggregate(sub$conc,by=list(sub$donor_name), FUN="sum"), c("donor_name", "sum_donor")))%>%
+  left_join(., setNames(aggregate(sub$conc,by=list(sub$substrate, sub$donor_name), FUN="sum"), c("substrate","donor_name", "sum_sub")))%>%
+  mutate(substrate = factor(substrate, levels=c( "H2O","SS"  , "XY" ,  "Nut" , "AG"  ,   "IN"  , "bGlc" ,"PE" ,  "Pea")))%>%
+  mutate(donor_name = factor(donor_name, levels =c( "XNMN", "SEEQ", "HTKE", "GWDF", "JCDD", "BXDM", "JBJW", "AVCW", "FNNW", "GCVJ", "HXBH", "TPSJ", "YFKF", "EAJK", "KTRS", "YQRV")))->sub_sub
+
+sub_sub%>%
+  ggplot(aes(x=conc, y=substrate))+
+  geom_bar(stat="identity", aes(fill=metabolite))+
+  theme(text= element_text(size = 15), 
+        strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.text.y = element_text(angle=0),
+        strip.background = element_blank(), 
+        axis.title.y=element_blank())+
+  facet_grid(rows = vars(donor_name), scales="free")+
+  xlab("Concentration [mM]")+
+  labs(fill="Metabolite")+
+  scale_fill_manual(values=c( "cyan4", "gold2", "seagreen","indianred", "#a6cee3"), labels = c("Indolepropionate"="IPA", "Indoleacetate"="IA", "Indolelactate"="ILA"))->plot_1
+
+
+
+meta_trp%>%
+  gather(metabolite, conc, "Indolelactate": "Tryptamine")%>%
+  subset(metabolite %in% c("Indolepropionate", "Indolelactate"))%>%
+  # filter(conc > 0)%>%
+  mutate(id = paste(donor_name, substrate))->sub
+
+left_join(sub, setNames(aggregate(sub$conc,by=list(sub$donor_name), FUN="sum"), c("donor_name", "sum_donor")))%>%
+  left_join(., setNames(aggregate(sub$conc,by=list(sub$substrate, sub$donor_name), FUN="sum"), c("substrate","donor_name", "sum_sub")))%>%
+  mutate(substrate = factor(substrate, levels=c( "H2O","SS"  , "XY" ,  "Nut" , "AG"  ,   "IN"  , "bGlc" ,"PE" ,  "Pea")))%>%
+  mutate(donor_name = factor(donor_name, levels =c( "XNMN", "SEEQ", "HTKE", "GWDF", "JCDD", "BXDM", "JBJW", "AVCW", "FNNW", "GCVJ", "HXBH", "TPSJ", "YFKF", "EAJK", "KTRS", "YQRV")))->sub_sub
+
+sub_sub%>%
+  ggplot(aes(x=conc, y=substrate))+
+  geom_bar(stat="identity", aes(fill=metabolite))+
+  theme(text= element_text(size = 15), 
+        strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.text.y = element_text(angle=0),
+        strip.background = element_blank(), 
+        axis.title.y=element_blank())+
+  facet_grid(rows = vars(donor_name))+
+  xlab("IPA [mM]")+
+  labs(fill="Metabolite")+
+  scale_fill_manual(values=c( "indianred", "seagreen"), labels=c("Indolepropionate"="IPA"))->plot_1.b
+
+
+sub_sub%>%
+  ggplot(aes(fill=substrate,x=1, y=substrate))+
+  facet_grid(rows = vars(donor_name), scales="free")+
+  geom_tile()+
+  labs(fill="Substrate")+
+  theme(text= element_text(size = 15))+
+  scale_fill_manual(values=c("grey","#1f78b4", "#33a02c", "#e31a1c", "#ff7f00", "#a6cee3", "#b2df8a", "#fb9a99", "#fdbf6f" ))->plot_2
+ 
+
+# Assuming plot_1 and plot_2 are already created ggplot objects
+
+# Extract legends
+legend_1 <- get_legend(plot_1)
+legend_2 <- get_legend(plot_2)
+
+
+
+# Create a combined legend, might require custom arrangement depending on your needs
+combined_legend <- plot_grid(legend_1, legend_2, ncol = 1, align = 'v')
+
+
+
+final_plot <- plot_grid(
+  
+   plot_2+
+    theme(legend.position = "none",
+          strip.text = element_blank(),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+          axis.ticks = element_blank(),
+          panel.spacing = unit(0, "lines"),
+          panel.background = element_rect(fill="white")),
+  #plot 1: growth
+  plot_1+
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          panel.spacing = unit(0, "lines"), 
+          legend.position = "none"),
+  align= "h", rel_heights = c(1,1,1), rel_widths=c(0.12,0.87), nrow=1, axis = 'tb'
+)
+
+
+plot_grid(final_plot, combined_legend, rel_widths=c(0.6, 0.4)  )
+
+# Display or save the final plot
+ggsave(filename = "indoles_production.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 9,
+       height = 20,
+       units = c("cm"))
+```
+
+#overview without facets
+```{r}
+meta_trp%>%
+  gather(metabolite, conc, "Indolelactate": "Tryptamine")%>%
+  filter(conc > 0)%>%
+  mutate(id = paste(donor_name, substrate))->sub
+
+left_join(sub, setNames(aggregate(sub$conc, by=list(sub$id), FUN="sum"), c("id", "sum_id")))%>%
+  mutate(id = factor(id))%>%
+  mutate(id = reorder(id, sum_id))->sub_sub
+
+sub_sub%>%
+  ggplot(aes(x=conc, y=id))+
+  geom_bar(stat="identity", aes(fill=metabolite))+
+  theme(text= element_text(size = 15), 
+        strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.text.y = element_text(angle=0),
+        strip.background = element_blank(), 
+        axis.title.y=element_blank())+
+  xlab("Concentration [mM]")+
+  labs(fill="Metabolite")+
+  scale_fill_manual(values=c( "cyan4", "gold2", "seagreen","indianred", "#a6cee3"))->plot_1
+
+sub_sub[,c("donor_name", "substrate", "id", "sum_id")]%>%
+  gather(what, why, "donor_name":"substrate")->long
+
+long%>%
+    mutate(id = factor(id))%>%
+  mutate(id = reorder(id, sum_id))%>%
+  ggplot(aes(fill=why,x=what, y=id))+
+   new_scale_fill() +
+   geom_tile(data = subset(long, what %in% c("donor_name")), aes(fill = why )) +
+   scale_fill_manual(values  =  c("#1f78b4","#a6cee3","#80b1d3", "cyan4","#8dd3c7", "#33a02c","#b2df8a", "#e31a1c", "#ff7f00",  "#b15928" , "#fdbf6f","darkgoldenrod2", "#fb9a99","#fb8072", "#6a3d9a",  "#cab2d6"), name= "Donor")+
+  new_scale_fill() +
+   geom_tile(data = subset(long, what %in% c("substrate")), aes(fill = why )) +
+   scale_fill_manual(values  =  c("grey","#1f78b4", "#33a02c", "#e31a1c", "#ff7f00", "#a6cee3", "#b2df8a", "#fb9a99", "#fdbf6f"), name= "Substrate")+
+  theme(text= element_text(size = 10),
+        axis.text.x = element_text(angle=90, hjust=1, vjust=0.5),
+        axis.ticks = element_blank())+
+  scale_x_discrete(labels=c("donor_name"="Donor", "substrate"="Fiber"))->plot_2
+ 
+
+# Assuming plot_1 and plot_2 are already created ggplot objects
+
+# Extract legends
+legend_1 <- get_legend(plot_1)
+legend_2 <- get_legend(plot_2)
+
+
+
+# Create a combined legend, might require custom arrangement depending on your needs
+combined_legend <- plot_grid(legend_1, legend_2, ncol = 1, align = 'v')
+
+
+
+final_plot <- plot_grid(
+  
+   plot_2+
+    theme(legend.position = "none",
+          strip.text = element_blank(),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+          axis.ticks = element_blank(),
+          panel.spacing = unit(0, "lines"),
+          panel.background = element_rect(fill="white")),
+  #plot 1: growth
+  plot_1+
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          panel.spacing = unit(0, "lines"), 
+          legend.position = "none"),
+  align= "h", rel_heights = c(1,1,1), rel_widths=c(0.2,0.8), nrow=1, axis = 'tb'
+)
+
+ggsave(filename = "indoles_production_mesclada.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 7,
+       height = 20,
+       units = c("cm"))
+
+plot_grid(final_plot, combined_legend, rel_widths=c(0.6, 0.4)  )
+
+# Display or save the final plot
+
+```
+##indoles. stat test absolute comparisons
+
+
+```{r}
+meta_trp%>%
+  gather(metabolite, conc, "Indolelactate": "Tryptamine")%>%
+  mutate(conc = ifelse(conc < 0.0025, 0, conc))->meta_trp_long
+
+meta_trp_long%>%
+  group_by(substrate, metabolite)%>%
+  shapiro_test(conc)%>%
+  filter(p < 0.05)
+
+meta_trp_long%>%
+   # filter(conc >= 0)%>%
+  group_by(metabolite)%>%
+  wilcox_test(conc~substrate, ref.group = "H2O")%>%
+  add_significance()%>%
+  add_xy_position()%>%
+  mutate(metabolite = factor(metabolite, levels=c("Indolepropionate", "Indolelactate", "Indoleacetate", "Tryptamine", "Indole")))%>%
+  mutate(y.position = ifelse(metabolite =="Indole", 1, y.position))%>%
+  mutate(y.position = ifelse(metabolite =="Indoleacetate", 0.075, y.position))%>%
+  mutate(y.position = ifelse(metabolite =="Indolelactate", 0.100, y.position))%>%
+  mutate(y.position = ifelse(metabolite =="Indolepropionate", 0.09, y.position))%>%
+  mutate(p.adj.signif = ifelse(p.adj.signif =="****", "***", p.adj.signif))->stat_test
+
+# %>%
+#   mutate(xmin = ifelse(group1 =="H2O", 1, xmin))%>%
+#   mutate(xmax = ifelse(group2 =="XY", 2, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="Nut", 3, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="AG", 4, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="SS", 5, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="IN", 6, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="bGlc", 7, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="PE", 8, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="Pea", 9, xmax))
+
+
+stat_test%>%
+  subset(p.adj<0.05)
+  
+```
+
+
+```{r}
+names=list( "Indolepropionate"= "IPA" ,
+            "Indolelactate" = "ILA" ,
+            "Indoleacetate" = "IA", 
+            "Indole" = "Indole",
+           "Tryptamine" = "Tryptamine")
+
+left_join(left_join(setNames(aggregate(meta_trp_long$conc, by=list(meta_trp_long$substrate, meta_trp_long$metabolite), FUN=median, na.rm=T), c( "substrate", "metabolite", "mean")), 
+          setNames(aggregate(meta_trp_long$conc, by=list( meta_trp_long$substrate, meta_trp_long$metabolite), FUN=sd, na.rm=T), c("substrate", "metabolite", "sd"))),
+
+
+meta_trp_long)%>%
+  # filter(conc >= 0)%>%
+  mutate(substrate = factor(substrate, levels=c( "H2O", "SS"  ,"XY" ,  "Nut" , "AG"  ,   "IN"  , "bGlc" ,"PE" ,  "Pea")))%>%
+  mutate(metabolite = factor(metabolite, levels=c("Indolepropionate", "Indolelactate", "Indoleacetate", "Indole", "Tryptamine")))%>%
+  mutate(donor_name = factor(donor_name, levels =c( "XNMN", "SEEQ", "HTKE", "GWDF", "JCDD", "BXDM", "JBJW", "AVCW", "FNNW", "GCVJ", "HXBH", "TPSJ", "YFKF", "EAJK", "KTRS", "YQRV")))%>%
+  ggplot(aes(x=substrate, y=conc))+
+  geom_bar(stat = "summary", fun.y = "mean", fill = "white", colour="black")+
+  geom_errorbar( aes(ymin=mean, ymax=mean+sd), width=0.1)+
+  geom_jitter(aes(colour=donor_name), width=0.06, alpha=0.8)+
+  theme(text= element_text(size = 15), 
+        strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.text.y = element_text(angle=-90, hjust=0.5),
+        strip.placement = "outside",
+        strip.background = element_blank(), 
+        axis.title.x=element_blank(), 
+        # legend.position = "bottom", 
+        axis.text.x=element_text(angle=90, hjust=1))+
+  facet_grid(rows = vars(metabolite), scales="free", labeller = facet_labeller)+
+  ylab("Concentration [mM]")+
+  scale_x_discrete(labels = c('H2O' = expression(H[2]*O), "SS"="Starch", "XY"="Xylan", "Nut"= "Dextrin", "IN"="Inulin", "PE"="Pectin"))+
+  labs(fill="Metabolite")+
+  stat_pvalue_manual(stat_test, hide.ns = T, x="group2", bracket.nudge.y=F, size=6)+
+  scale_colour_manual(values=c("#1f78b4","#a6cee3","#80b1d3", "cyan4","#8dd3c7", "#33a02c","#b2df8a", "#e31a1c", "#ff7f00",  "#b15928" , "#fdbf6f","darkgoldenrod2", "#fb9a99","#fb8072", "#6a3d9a",  "#cab2d6"), labels = c("XNMN"="D1", "SEEQ"="D2", "HTKE" ="D3", "GWDF" ="D4", "JCDD" ="D5", "BXDM"="D6", "JBJW"="D7", "AVCW"="D8", "FNNW"="D9", "GCVJ"="D10", "HXBH"="D11", "TPSJ"="D12", "YFKF"="D13", "EAJK"="D14", "KTRS"="D15", "YQRV"="D16"))+
+  labs(colour="Donor") ->variability_substrate
+
+  variability_substrate
+  
+ggsave(filename = "indoles_production_stats_main_abs.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 14,
+       height = 14,
+       units = c("cm"))
+```
+
+```{r}
+left_join(setNames(aggregate(meta_trp_long$conc, by=list(meta_trp_long$substrate, meta_trp_long$metabolite), FUN=mean), c( "substrate", "metabolite", "mean")), 
+          setNames(aggregate(meta_trp_long$conc, by=list( meta_trp_long$substrate, meta_trp_long$metabolite), FUN=sd), c("substrate", "metabolite", "sd")))%>%
+  mutate(mean = round(mean *1000, 1))%>%
+  mutate(sd = round(sd * 1000, 1))%>%
+  subset(metabolite %in% "Indoleacetate")
+
+```
+
+##OD measurements
+```{r}
+OD<-read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/Raw_Data_PB/OD/20240224_OD_tryptophan_samples.xlsx")
+
+OD%>%
+  gather(rep, OD, "r1":"r2")->OD
+
+setNames(aggregate(OD$OD, by=list(OD$donor_name, OD$substrate), FUN=mean), c("donor_name","substrate", "OD"))->OD_mean
+  
+```
+
+```{r}
+left_join(meta_trp, OD_mean%>%
+            subset(!substrate %in% c("DL-LT", "SU", "FO", "Muc", "bYCFA H2O ctrl."))%>%
+            mutate(substrate = ifelse(substrate == "bYCFA H2O", "H2O", substrate))%>%
+            mutate(substrate = ifelse(substrate == "b-Glc", "bGlc", substrate))%>%
+            mutate(donor_name = ifelse(donor_name == "AVWC", "AVCW", donor_name))%>%
+            mutate(donor_name = ifelse(donor_name == "JBWB", "JBJW", donor_name)))%>%
+  gather(metabolite, conc, "Indolelactate": "Tryptamine")%>%
+  mutate(conc = ifelse(conc < 0.0025, 0, conc))%>%
+  mutate(conc_rel = conc/OD)->meta_trp_long
+
+# meta_trp_long%>%
+#   group_by(substrate, metabolite)%>%
+#   shapiro_test(conc_rel)%>%
+#   filter(p >0.05)
+
+meta_trp_long%>%
+   filter(conc_rel >= 0)%>%
+  group_by(metabolite)%>%
+  wilcox_test(conc_rel~substrate, ref.group = "H2O")%>%
+  add_significance()%>%
+  add_xy_position()%>%
+  mutate(metabolite = factor(metabolite, levels=c("Indolepropionate", "Indolelactate", "Indoleacetate", "Tryptamine", "Indole")))%>%
+  mutate(y.position = ifelse(metabolite =="Indole", 1, y.position))%>%
+  mutate(y.position = ifelse(metabolite =="Indoleacetate", 0.075, y.position))%>%
+  mutate(y.position = ifelse(metabolite =="Indolelactate", 0.100, y.position))%>%
+  mutate(y.position = ifelse(metabolite =="Indolepropionate", 0.15, y.position))%>%
+  mutate(p.adj.signif = ifelse(p.adj.signif =="****", "***", p.adj.signif))->stat_test
+
+# %>%
+#   mutate(xmin = ifelse(group1 =="H2O", 1, xmin))%>%
+#   mutate(xmax = ifelse(group2 =="XY", 2, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="Nut", 3, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="AG", 4, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="SS", 5, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="IN", 6, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="bGlc", 7, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="PE", 8, xmax))%>%
+#   mutate(xmax = ifelse(group2 =="Pea", 9, xmax))
+
+
+stat_test%>%
+  subset(p.adj<0.05)
+  
+```
+
+
+```{r}
+names=list( "Indolepropionate"= "IPA" ,
+            "Indolelactate" = "ILA" ,
+            "Indoleacetate" = "IA", 
+            "Indole" = "Indole",
+           "Tryptamine" = "Tryptamine")
+
+left_join(left_join(setNames(aggregate(meta_trp_long$conc_rel, by=list(meta_trp_long$substrate, meta_trp_long$metabolite), FUN=mean, na.rm=T), c( "substrate", "metabolite", "mean")), 
+          setNames(aggregate(meta_trp_long$conc_rel, by=list( meta_trp_long$substrate, meta_trp_long$metabolite), FUN=sd, na.rm=T), c("substrate", "metabolite", "sd"))),
+
+
+meta_trp_long)%>%
+  filter(conc_rel >= 0)%>%
+  mutate(substrate = factor(substrate, levels=c( "H2O", "SS"  ,"XY" ,  "Nut" , "AG"  ,   "IN"  , "bGlc" ,"PE" ,  "Pea")))%>%
+  mutate(metabolite = factor(metabolite, levels=c("Indolepropionate", "Indolelactate", "Indoleacetate", "Indole", "Tryptamine")))%>%
+  mutate(donor_name = factor(donor_name, levels =c( "XNMN", "SEEQ", "HTKE", "GWDF", "JCDD", "BXDM", "JBJW", "AVCW", "FNNW", "GCVJ", "HXBH", "TPSJ", "YFKF", "EAJK", "KTRS", "YQRV")))%>%
+  ggplot(aes(x=substrate, y=conc_rel))+
+  geom_bar(stat = "summary", fun.y = "mean", fill = "white", colour="black")+
+  geom_errorbar( aes(ymin=mean-sd, ymax=mean+sd), width=0.1)+
+  geom_jitter(aes(colour=donor_name), width=0.07, alpha=0.8)+
+  theme(text= element_text(size = 15), 
+        strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.text.y = element_text(angle=-90, hjust=0.5),
+        strip.placement = "outside",
+        strip.background = element_blank(), 
+        axis.title.x=element_blank(), 
+        # legend.position = "bottom", 
+        axis.text.x=element_text(angle=90, hjust=1))+
+  facet_grid(rows = vars(metabolite), scales="free", labeller = facet_labeller)+
+  ylab("Normalized concentration [mM/OD600]")+
+  scale_x_discrete(labels = c('H2O' = expression(H[2]*O), "SS"="Starch", "XY"="Xylan", "Nut"= "Dextrin", "IN"="Inulin", "PE"="Pectin"))+
+  labs(fill="Metabolite")+
+  stat_pvalue_manual(stat_test, hide.ns = T, x="group2", bracket.nudge.y=F, size=6)+
+  scale_colour_manual(values=c("#1f78b4","#a6cee3","#80b1d3", "cyan4","#8dd3c7", "#33a02c","#b2df8a", "#e31a1c", "#ff7f00",  "#b15928" , "#fdbf6f","darkgoldenrod2", "#fb9a99","#fb8072", "#6a3d9a",  "#cab2d6"), labels = c("XNMN"="D1", "SEEQ"="D2", "HTKE" ="D3", "GWDF" ="D4", "JCDD" ="D5", "BXDM"="D6", "JBJW"="D7", "AVCW"="D8", "FNNW"="D9", "GCVJ"="D10", "HXBH"="D11", "TPSJ"="D12", "YFKF"="D13", "EAJK"="D14", "KTRS"="D15", "YQRV"="D16"))+
+  labs(colour="Donor") ->variability_substrate
+
+  variability_substrate
+  
+ggsave(filename = "indoles_production_stats_main.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 14,
+       height = 14,
+       units = c("cm"))
+```
+```{r}
+left_join(setNames(aggregate(meta_trp_long$conc_rel, by=list(meta_trp_long$substrate, meta_trp_long$metabolite), FUN=mean, na.rm=T), c( "substrate", "metabolite", "mean")), 
+          setNames(aggregate(meta_trp_long$conc_rel, by=list( meta_trp_long$substrate, meta_trp_long$metabolite), FUN=sd, na.rm=T), c("substrate", "metabolite", "sd")))%>%
+  mutate(mean = round(mean *1000, 1))%>%
+  mutate(sd = round(sd * 1000, 1))%>%
+  subset(metabolite %in% "Indolelactate")
+
+```
+
+
+```{r}
+normalize_min_max <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+meta_trp_long[, c("donor_name", "substrate", "conc_rel", "metabolite")]%>%
+  pivot_wider(names_from = metabolite, values_from = conc_rel)->meta_trp_wide
+
+# Applying Min-Max Normalization to multiple columns
+df_normalized_min_max <- as.data.frame(lapply(meta_trp_wide[, c("Indole", "Indolelactate", "Indoleacetate", "Indolepropionate", "Tryptamine")]%>%
+                                                  mutate(across(c("Indole", "Indolelactate", "Indoleacetate", "Indolepropionate", "Tryptamine"), ~ ifelse(. < 0, 0, .))), normalize_min_max))
+
+
+meta_trp_norm<-meta_trp_wide
+
+meta_trp_norm[, c("Indole", "Indolelactate", "Indoleacetate", "Indolepropionate", "Tryptamine")]<-df_normalized_min_max
+
+meta_trp_norm%>%  
+  gather(metabolite, conc, "Indolelactate": "Tryptamine")%>%
+  mutate(conc = conc*100)%>%
+  mutate(donor_name = factor(donor_name, levels =c( "XNMN", "SEEQ", "HTKE", "GWDF", "JCDD", "BXDM", "JBJW", "AVCW", "FNNW", "GCVJ", "HXBH", "TPSJ", "YFKF", "EAJK", "KTRS", "YQRV")))%>%
+  ggplot(aes(y=donor_name, x=conc))+
+  geom_boxplot( aes(fill=donor_name), size=0.3, alpha=0.8, outlier.size = 0.5,  )+
+  # geom_jitter(aes(colour=donor_name), width=0.07, alpha=0.8)+
+  theme(text= element_text(size = 15), 
+        strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.text.y = element_text(angle=-90, hjust=0.5),
+        strip.background = element_blank()         )+
+  facet_grid(rows = vars(metabolite), scales="free", labeller = facet_labeller)+
+  ylab("Concentration [mM]")+
+  labs(fill="Metabolite")+
+   scale_fill_manual(values=c("#1f78b4","#a6cee3","#80b1d3", "cyan4","#8dd3c7", "#33a02c","#b2df8a", "#e31a1c", "#ff7f00",  "#b15928" , "#fdbf6f","darkgoldenrod2", "#fb9a99","#fb8072", "#6a3d9a",  "#cab2d6"), labels = c("XNMN"="D1", "SEEQ"="D2", "HTKE" ="D3", "GWDF" ="D4", "JCDD" ="D5", "BXDM"="D6", "JBJW"="D7", "AVCW"="D8", "FNNW"="D9", "GCVJ"="D10", "HXBH"="D11", "TPSJ"="D12", "YFKF"="D13", "EAJK"="D14", "KTRS"="D15", "YQRV"="D16"))+
+  labs(colour="Donor")+
+  scale_x_continuous(breaks=c(0,50,100))+
+  xlab("Concentration [%]")->varibility_donor
+  
+  # +
+  # scale_fill_manual(values=c( "cyan4", "gold2", "seagreen","indianred", "#a6cee3"))->plot_1
+
+ggsave(filename = "indoles_production_stats.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 17,
+       height = 14,
+       units = c("cm"))
+```
+
+```{r}
+variability_substrate %>%
+  ggpubr::get_legend() %>%
+  ggpubr::as_ggplot() + theme_classic() -> plot_legend 
+  
+ggsave(filename = "legends_indoles_production_stats_mescla.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 17,
+       height = 15,
+       units = c("cm"))
+
+plot_grid(variability_substrate + theme(legend.position = "none", 
+                                        strip.text.y = element_blank()), 
+          varibility_donor + theme(axis.text.y = element_blank(),
+                                  axis.title.y = element_blank(),
+                                  axis.ticks.y = element_blank(),
+                                  legend.position = "none"), 
+  align= "h", rel_heights = c(1,1,1), rel_widths=c(0.6,0.4), nrow=1, axis = 'tb')
+
+ggsave(filename = "indoles_production_stats_mescla.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 17,
+       height = 15,
+       units = c("cm"))
+```
+```{r}
+
+
+ggsave(filename = "indoles_production_stats_mescla.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 17,
+       height = 15,
+       units = c("cm"))
+
+
+```
+
+
+
+```{r}
+OD<-read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/Raw_Data_PB/OD/20240224_OD_tryptophan_samples.xlsx")
+
+OD%>%
+  gather(rep, OD, "r1":"r2")->OD
+
+setNames(aggregate(OD$OD, by=list(OD$donor_name, OD$substrate), FUN=mean), c("donor_name","substrate", "OD"))->OD_mean
+  
+```
+```{r}
+left_join(OD_mean%>%
+            subset(!substrate %in% c("bYCFA H2O ctrl.")), setNames(OD_mean%>%subset(substrate %in% "bYCFA H2O ctrl."), c("donor_name","substrate_blank","blank")))%>%
+  subset(!substrate %in% c("DL-LT", "SU", "FO", "Muc"))%>%
+  mutate(substrate = ifelse(substrate == "bYCFA H2O", "H2O", substrate))%>%
+   mutate(substrate = ifelse(substrate == "b-Glc", "bGlc", substrate))%>%
+  mutate(blank_corrected = OD - blank)%>%
+   mutate(substrate = factor(substrate, levels=c( "H2O", "XY" ,  "Nut" , "AG"  , "SS"  ,  "IN"  , "bGlc" ,"PE" ,  "Pea")))%>%
+  ggplot(aes(y=blank_corrected, x=substrate))+
+  geom_boxplot(size=0.3, alpha=0.8, outlier.size = 0.5,  )+
+   geom_jitter(aes(colour=donor_name), width=0.07, alpha=0.8)+
+  theme(text= element_text(size = 15), 
+        strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.text.y = element_text(angle=0, hjust=0),
+        strip.background = element_blank())+
+  ylab("OD600")+
+  labs(fill="Metabolite")+
+   scale_fill_manual(values=c("#1f78b4","#a6cee3","#80b1d3", "cyan4","#8dd3c7", "#33a02c","#b2df8a", "#e31a1c", "#ff7f00",  "#b15928" , "#fdbf6f","darkgoldenrod2", "#fb9a99","#fb8072", "#6a3d9a",  "#cab2d6"))+
+  labs(colour="Donor")
+  
+```
+
+
+
+```{r}
+rel_indoles%>%
+  # subset(!donor_name %in% c("EAJK", "YQRV","KTRS", "YFKF"))%>%
+  filter(conc_rel >= 0)%>%
+  mutate(substrate = factor(substrate, levels=c( "H2O", "XY" ,  "Nut" , "AG"  , "SS"  ,  "IN"  , "bGlc" ,"PE" ,  "Pea")))%>%
+  mutate(donor_name = factor(donor_name, levels =c( "XNMN", "SEEQ", "HTKE", "GWDF", "JCDD", "BXDM", "JBJW", "AVCW", "FNNW", "GCVJ", "HXBH", "TPSJ", "YFKF", "EAJK", "KTRS", "YQRV")))%>%
+  ggplot(aes(x=substrate, y=conc_rel))+
+  geom_boxplot( outlier.shape = NA, size=0.3)+
+  geom_jitter(aes(colour=donor_name), width=0.07, alpha=0.8)+
+  theme(text= element_text(size = 15), 
+        strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.text.y = element_text(angle=0, hjust=0),
+        strip.background = element_blank(), 
+        axis.title.x=element_blank())+
+  facet_grid(rows = vars(metabolite), scales="free")+
+  ylab("Concentration [mM]")+
+  labs(fill="Metabolite")+
+  # stat_pvalue_manual(stat_test, hide.ns = T, x="group2", bracket.nudge.y=F)+
+  # geom_point(data=data.frame(substrate = "H2O", metabolite="Indolelactate", conc=0.225), colour="white")+
+  # geom_point(data=data.frame(substrate = "H2O", metabolite="Indolepropionate", conc=0.175), colour="white")+
+   scale_colour_manual(values=c("#1f78b4","#a6cee3","#80b1d3", "cyan4","#8dd3c7", "#33a02c","#b2df8a", "#e31a1c", "#ff7f00",  "#b15928" , "#fdbf6f","darkgoldenrod2", "#fb9a99","#fb8072", "#6a3d9a",  "#cab2d6"))+
+  labs(colour="Donor")->variability_substrate
+  
+  # +
+  # scale_fill_manual(values=c( "cyan4", "gold2", "seagreen","indianred", "#a6cee3"))->plot_1
+
+ggsave(filename = "indoles_production_stats.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 17,
+       height = 12,
+       units = c("cm"))
+```

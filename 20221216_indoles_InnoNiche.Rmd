@@ -1,0 +1,102 @@
+---
+title: "WP3_indoles_inno_niche"
+output: html_document
+date: '2022-12-16'
+---
+
+```{r setup, include=FALSE}
+.libPaths('C:\\Users\\zuendj\\Documents\\R4Libs')
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "C:/Users/zuendj/Desktop/03_data R/wp3", cho = TRUE, warning = FALSE, message = FALSE)
+
+# Install Packages:
+# install.packages("rlang")
+# install.packages("tidyr")
+# install.packages("ggbreak")
+
+#
+# library(tidyverse)
+# library(ggplot2)
+# library(tidyr)
+# # install.packages("devtools")
+# # devtools::install_github("slowkow/ggrepel")
+# library(ggrepel)
+# library(ggbreak)
+# library(openxlsx)
+```
+
+#1. Load the data
+```{r}
+setwd("C:/Users/zuendj/Desktop/03_data R/wp3/input")
+###get the file
+
+files <- list.files(path = "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3")
+
+#########################################
+#load the data
+########################################
+metaboliteswide <- read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/01_indoles_quantification/export_innoNiche_janina_20231121.xlsx", sheet = "all")
+
+
+#make NaN values =0? does that make sense? check later!
+metaboliteswide[is.na(metaboliteswide)] = 0
+
+```
+
+###filter out non-samples & Intermediate substrate
+```{r}
+metaboliteswide%>%
+   subset(substrate %in% c("H2O", 'AG','PE', 'Pea', 'bGlc', 'IN', 'Muc' ,'SS' ,'XY' , 'Nut', "SU", "LT", "FO"))->metaboliteswide
+```
+
+
+##2. Calibration
+### Set data frame with Calibration values
+### Indole acrylate, Skatole & Indole acetamide are not detected => will not be considered, for other compounds; define detection limit
+
+```{r}
+df_calibration <- matrix(0,1,6)
+df_calibration[1,] <-c(0.0261, 0.0251, 0.0294, 0.0265, 0.0279, 0.0212)
+
+
+colnames(df_calibration) <-c("Indolelactate", "Indoleacetate", "Indole", "Indolepropionate", "Tryptophan",  "Tryptophol")
+rownames(df_calibration)<-c("a")
+
+df_calibration
+```
+
+```{r}
+p<-ncol(metaboliteswide)
+indoles <-c("Indolelactate", "Indoleacetate", "Indole", "Indolepropionate", "Tryptophan", "Tryptophol")
+
+
+
+metaboliteswide %>%
+  mutate(Indolelactate_mM = as.numeric(Indolelactate) * df_calibration[1,c("Indolelactate")] *4,
+         Indoleacetate_mM = as.numeric(Indoleacetate) * df_calibration[1,c("Indoleacetate")] *4,
+         Indole_mM = as.numeric(Indole) * df_calibration[1,c("Indole")] *4,
+         Indolepropionate_mM = as.numeric(Indolepropionate) * df_calibration[1,c("Indolepropionate")] *4,
+         Tryptophan_mM = as.numeric(Tryptophan) * df_calibration[1,c("Indolelactate")] *4,
+         Tryptophol_mM = as.numeric(Tryptophol) * df_calibration[1,c("Tryptophol")] *4) -> df_concentrations
+
+
+df_concentrations<-df_concentrations[, c("donor_name", "substrate", "Indolelactate_mM", "Indoleacetate_mM", "Indole_mM", "Indolepropionate_mM", "Tryptophan_mM", "Tryptophol_mM" )]
+colnames(df_concentrations)<-c("donor_name", "substrate", "Indolelactate", "Indoleacetate", "Indole", "Indolepropionate", "Tryptophan", "Tryptophol")
+
+write.xlsx(df_concentrations,  "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/01_indoles_quantification/concentrations_calculated_20240128.xlsx")
+```
+##Read Tryptamine data from UHPLC Human nutrition
+```{r}
+metaboliteswide_tryptamine <- read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/01_indoles_quantification/Tryptamine_donors_janina.xlsx")
+```
+
+
+
+```{r}
+left_join(df_concentrations, metaboliteswide_tryptamine[, c("donor_name", "substrate", "Tryptamine", "Tryptophan_HN")])%>%
+  mutate(Tryptamine = Tryptamine / 1000,
+         Tryptophan_HN = Tryptophan_HN / 1000) -> df_idoles_and_tryptamine
+
+write.xlsx(df_idoles_and_tryptamine,  "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/01_indoles_quantification/concentrations_calculated_202401.xlsx")
+```
+

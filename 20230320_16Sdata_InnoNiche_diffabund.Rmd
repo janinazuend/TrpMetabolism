@@ -1,0 +1,845 @@
+
+```{r setup, echo =FALSE}
+.libPaths('C:\\Users\\zuendj\\Documents\\R4Libs')
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "P:/Shared_documents/Serafina PlÃ¼ss/20230320_sequencing_results/Janina", cho = TRUE, warning = FALSE, message = FALSE)
+
+# library(ggdendro)
+# library(ggrepel)
+
+ #  unloadNamespace("mia")
+```
+
+```{r, echo =FALSE}
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_taxa_tests.R") 
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_normalisation.R") 
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_alpha.R") 
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_beta.R") 
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_heatmap.R")
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_taxa_tests.R")
+source("https://raw.githubusercontent.com/fconstancias/metabaRpipe-source/master/Rscripts/functions.R")
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_varia.R")
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_beta.R")
+
+#get metadata file: load this function
+sample.data.frame <- function(ps) {
+  return(as(phyloseq::sample_data(ps), "data.frame"))}
+
+unloadNamespace("mia")
+```
+
+
+## Test Phyloseq
+```{r}
+phylo_test <-readRDS("P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/PB_Inno_Niche/phyloseq_phylo.RDS")
+# phylo_test <-readRDS("P:/Shared_documents/Janina_Zuend/08_phd/Raw_Data_PB/phyloseq/phyloseq.RDS")
+phylo_test%>%
+  physeq_add_metadata(physeq = .,
+                      metadata = "P:/Shared_documents/Janina_Zuend/08_phd/Raw_Data_PB/01_metadata_files/metadata_file_TRYPTOPHAN_missing_1.xlsx" %>%
+                        readxl::read_xlsx(),
+                      sample_column = "sample_name") -> phylo_test
+
+
+meta_trp<-sample.data.frame(phylo_test)
+uplc <- read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/01_indoles_quantification/concentrations_calculated_20231121.xlsx" )
+
+
+left_join(meta_trp, uplc[, c("donor_name", "substrate", "Indolelactate", "Indoleacetate", "Indole", "Indolepropionate", "Tryptamine", "Tryptophan_HN" )])%>%
+  gather(metabolite, conc, "Indolelactate": "Tryptamine")%>%
+  mutate(conc = ifelse(conc <0.005, 0, conc))%>%
+  pivot_wider(names_from = metabolite, values_from = conc)%>%
+  left_join(cluster)%>%
+  as.data.frame()%>%
+  mutate(prod ="no")%>%
+  mutate(prod = ifelse(donor_name %in% c("JCDD",  "JBJW",  "GCVJ"), "IPA_only", prod))%>%
+  mutate(prod = ifelse(donor_name %in% c("FNNW","BXDM"), "ILA_only", prod))%>%
+  mutate(prod = ifelse(donor_name %in% c("AVCW", "XNMN", "HTKE", "GWDF", "SEEQ"), "IPA_ILA", prod))%>%
+  mutate(prod = ifelse(donor_name %in% c("YQRV", "YFKF", "EAJK", "KTRS"), "nothing", prod))->meta_trp_new
+
+
+
+colnames(meta_trp_new)[which(names(meta_trp_new) == "Tryptophan_HN")] <- "Tryptophan"
+
+ rownames(meta_trp_new)<- NULL
+
+rownames(meta_trp_new)<-c(meta_trp_new$sample_name)
+sample_data(phylo_test)<-meta_trp_new
+
+
+phylo_test<-phyloseq_get_strains(phylo_test)
+
+noNA = !is.na(tax_table(phylo_test)[,"Genus"]) & !is.na(tax_table(phylo_test)[,"Species"])
+tax_table(phylo_test)[noNA][,"Species"] = paste(tax_table(phylo_test)[noNA][,"Genus"], tax_table(phylo_test)[noNA][,"Species"])
+phylo_test%>%
+  tax_fix()->phylo_test
+
+ps_strain_filt <- phylo_test
+
+# threshold in %
+threshold = 0.01
+
+# filter per sample to remove all ASV lower in abundance than threshold (%)
+otu_table(ps_strain_filt) <- otu_table(ps_strain_filt) %>%
+  as.data.frame() %>%
+  dplyr:: mutate(across(everything(), ~ ifelse(. <= sum(.) * (threshold/100), 0, .))) %>% otu_table(., taxa_are_rows = TRUE)
+
+# remove all ASVs that are not present in any sample
+ps_strain_filt <- ps_strain_filt %>%
+  filter_taxa(function(x) sum(x > 0) > 0, TRUE)
+
+
+uplc%>%
+  subset(substrate %in% "PE")
+```
+
+
+```{r}
+beta <- read.xlsx("C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/beta_distances.xlsx" )
+```
+
+
+
+##Aldex using Mia
+```{r, echo=FALSE, message=FALSE}
+#BiocManager::install("microbiome/mia")
+
+ library(mia)
+ library(ALDEx2)
+```
+
+
+```{r}
+trp <- makeTreeSummarizedExperimentFromPhyloseq(ps_strain_filt%>%subset_samples(!tryptophan %in% "feces")) 
+trp_fam <- trp %>% agglomerateByRank(rank = "Family")
+trp_gen <- trp %>% agglomerateByRank(rank = "Genus")
+trp_species <- trp %>% agglomerateByRank(rank = "Species")
+
+
+```
+
+###Aldex clusters against each other
+```{r, message=FALSE}
+##loop over all donors (are called repsodners anyway ;)
+
+  all_trp_gen_sub <-trp_gen[ ,trp_gen$tryptophan %in% c("Trp")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$cluster_hclust)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_trp <- data.frame(x_tt, x_effect)
+      
+#######
+    all_trp_gen_sub <-trp_gen[ ,trp_gen$tryptophan %in% c("no-Trp")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$cluster_hclust)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_no_trp <- data.frame(x_tt, x_effect)
+     
+```
+
+```{r}
+unloadNamespace("mia")
+
+aldex_out_no_trp$tryptophan<-"no-Trp"
+
+aldex_out_no_trp%>%
+  rownames_to_column->aldex_out_no_trp
+
+aldex_out_trp$tryptophan<-"Trp"
+aldex_out_trp%>%
+  rownames_to_column->aldex_out_trp
+
+diff_clusters<-rbind(aldex_out_no_trp, aldex_out_trp )
+```
+
+```{r}
+diff_clusters%>%
+  ggplot(aes(x=diff.btw, y=wi.ep))+
+    geom_point(data = subset(diff_clusters, wi.ep < 0.05 ), aes(colour=tryptophan), alpha=0.75, size=3)+
+   geom_point(data = subset(diff_clusters, wi.ep > 0.05 ), colour="grey", alpha=0.75, size=3)+
+geom_hline(yintercept = 0.05, linetype = "dashed", colour = "red")+
+  geom_vline(xintercept = 0.0, linetype = "dashed", colour = "grey")+
+  scale_colour_manual(values=c( "darkgoldenrod1", "cyan4"))+
+      geom_text_repel(data = subset(diff_clusters, wi.ep <0.05 & (diff.btw > 3 | diff.btw < -3)), aes(label = rowname), size=6, fontface = "italic", max.iter = 10000 )+
+ 
+      theme(axis.text.y= element_text(size = 20), 
+              axis.title.y = element_text(size=20), 
+              axis.title.x = element_text(size=20),
+              axis.text.x = element_text(size=20),
+              legend.text = element_text(size = 20),
+              legend.title = element_text(size= 20),
+              plot.title = element_text(size=20), 
+            panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA))+
+      xlab("Median clr-differences")+ylab("p-value")+scale_y_continuous(
+    trans  = compose_trans("log10", "reverse"),
+    labels = label_log()
+  ) +
+      ggtitle("Cluster 1 vs. Cluster 2")
+
+ggsave(filename = "vulcano_genuses.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 17,
+       height = 25,
+       units = c("cm"))
+
+```
+
+```{r}
+diff_clusters%>%filter(wi.ep <0.05)->filter
+
+tax_level ="Genus"
+
+phylo_trp%>%
+  physeq_glom_rename(                     speedyseq = T)%>%
+   microbiome::transform("clr") %>% 
+  psmelt()%>%
+    subset(tryptophan %in% c("Trp", "no-Trp"))%>%
+   subset(substrate %in% c( "AG", "bGlc", "IN",  "Nut",  "Pea",  "PE", "SS", "XY", "Muc", "H2O"))%>%
+  # subset(Genus %in% c(unique(filter$rowname)))%>%
+  subset(Genus %in% "Enterocloster")-> catus
+
+# catus %>%
+#   # left_join(., cluster)%>%
+#   # mutate(Genus = reorder(Genus, Abundance))%>%
+#   ggplot(aes(y=Species, x=Abundance))+
+#  geom_point(aes(colour=substrate), position = position_dodge(0.9))+
+#   geom_boxplot(aes(fill=tryptophan), outlier.shape =NA, alpha=0.5)+
+#   # facet_grid(cols=vars(tryptophan))+
+#    theme(axis.text.y= element_text(size = 15), 
+#               axis.title.y = element_text(size=15), 
+#               axis.title.x = element_text(size=15),
+#               axis.text.x = element_text(size=15),
+#               legend.text = element_text(size = 15),
+#               legend.title = element_text(size= 15),
+#               plot.title = element_text(size=15), 
+#             panel.background = element_rect(fill="white"),
+#         panel.border=element_rect(fill=NA), strip.text.y = element_text(angle=0))+
+#   ggtitle("Clr-abundances in the two clusters")+
+#   facet_grid(rows=vars(donor_name))+
+#   scale_fill_manual(values=c( "coral3", "cyan4"))
+
+
+catus%>%
+  subset(!tryptophan %in% "no-Trp")%>%
+  ggplot(aes(x= Abundance, y= Indolepropionate))+
+  geom_point(aes(colour=substrate))+
+  facet_grid(cols=vars(donor_name), rows= vars(OTU))
+
+
+ggsave(filename = "diffabund_clusterss.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 25,
+       height = 25,
+       units = c("cm"))
+```
+
+
+##Diff abundance between basal and substrate with Trp -Pea
+```{r, message=FALSE}
+##loop over all donors (are called repsodners anyway ;)
+
+  all_trp_gen_sub <-trp_species[ ,trp_species$tryptophan %in% c("Trp") &
+                               trp_species$substrate %in% c("Pea", "H2O") &
+                                 trp_species$donor_name %in% c("AVCW", "XNMN", "HTKE", "GWDF", "SEEQ", "JCDD",  "JBJW",  "GCVJ", "FNNW","BXDM", "YQRV",  "EAJK")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$substrate)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_substrate <- data.frame(x_tt, x_effect)
+      
+       aldex_out_substrate$comparison <-"substrate-specififc"
+       
+      aldex_out_substrate%>%
+         rownames_to_column("Species")->aldex_out_substrate
+      
+      
+    ###############################################
+all_trp_gen_sub <-trp_species[ ,trp_species$tryptophan %in% c("Trp", "no-Trp") &
+                               trp_species$substrate %in% c("Pea") &
+                                 trp_species$donor_name %in% c("AVCW", "XNMN", "HTKE", "GWDF", "SEEQ", "JCDD",  "JBJW",  "GCVJ", "FNNW","BXDM", "YQRV",  "EAJK")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$tryptophan)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_trp <- data.frame(x_tt, x_effect)
+       aldex_out_trp$comparison <-"tryptophan-specififc"
+       aldex_out_trp%>%
+         rownames_to_column("Species")->aldex_out_trp
+```
+
+```{r}
+rbind(aldex_out_trp[,c("Species","wi.ep","diff.btw", "comparison" )], aldex_out_substrate[,c("Species","wi.ep","diff.btw", "comparison" )])%>%
+  mutate(wi.ep = wi.ep *2)%>%
+  subset(wi.ep <0.05)->pea
+```
+
+##Diff abundance between basal and substrate with Trp -Muc
+```{r, message=FALSE}
+##loop over all donors (are called repsodners anyway ;)
+
+  all_trp_gen_sub <-trp_species[ ,trp_species$tryptophan %in% c("Trp") &
+                               trp_species$substrate %in% c("Muc", "H2O") &
+                                 trp_species$donor_name %in% c("AVCW", "XNMN", "HTKE", "GWDF", "SEEQ", "JCDD",  "JBJW",  "GCVJ", "FNNW","BXDM", "YQRV",  "YFKF", "KTRS")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$substrate)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_substrate <- data.frame(x_tt, x_effect)
+      aldex_out_substrate$comparison <-"substrate-specififc"
+      aldex_out_substrate%>%
+         rownames_to_column("Species")->aldex_out_substrate
+    ###############################################
+all_trp_gen_sub <-trp_species[ ,trp_species$tryptophan %in% c("Trp", "no-Trp") &
+                               trp_species$substrate %in% c("Muc") &
+                                 trp_species$donor_name %in% c("AVCW", "XNMN", "HTKE", "GWDF", "SEEQ", "JCDD",  "JBJW",  "GCVJ", "FNNW","BXDM", "YQRV",  "YFKF", "KTRS")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$tryptophan)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_trp <- data.frame(x_tt, x_effect)
+       aldex_out_trp$comparison <-"tryptophan-specififc"
+       aldex_out_trp%>%
+         rownames_to_column("Species")->aldex_out_trp
+```
+
+```{r}
+rbind(aldex_out_trp[,c("Species","wi.ep","diff.btw", "comparison" )], aldex_out_substrate[,c("Species","wi.ep","diff.btw", "comparison" )])%>%
+   mutate(wi.ep = wi.ep *2)%>%
+  subset(wi.ep <0.05)->muc
+```
+
+##Diff abundance between basal and substrate with Trp -PE
+```{r, message=FALSE}
+##loop over all donors (are called repsodners anyway ;)
+
+  all_trp_gen_sub <-trp_species[ ,trp_species$tryptophan %in% c("Trp") &
+                               trp_species$substrate %in% c("PE", "H2O") &
+                                 trp_species$donor_name %in% c("AVCW", "XNMN", "HTKE", "GWDF", "SEEQ", "JCDD",  "JBJW",  "GCVJ", "FNNW","BXDM")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$substrate)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_substrate <- data.frame(x_tt, x_effect)
+      aldex_out_substrate$comparison <-"substrate-specififc"
+      aldex_out_substrate%>%
+         rownames_to_column("Species")->aldex_out_substrate
+    ###############################################
+all_trp_gen_sub <-trp_species[ ,trp_species$tryptophan %in% c("Trp", "no-Trp") &
+                               trp_species$substrate %in% c("Muc") &
+                                 trp_species$donor_name %in% c("AVCW", "XNMN", "HTKE", "GWDF", "SEEQ", "JCDD",  "JBJW",  "GCVJ", "FNNW","BXDM")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$tryptophan)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_trp <- data.frame(x_tt, x_effect)
+       aldex_out_trp$comparison <-"tryptophan-specififc"
+       aldex_out_trp%>%
+         rownames_to_column("Species")->aldex_out_trp
+```
+
+```{r}
+rbind(aldex_out_trp[,c("Species","wi.ep","diff.btw", "comparison" )], aldex_out_substrate[,c("Species","wi.ep","diff.btw", "comparison" )])%>%
+   mutate(wi.ep = wi.ep *2)%>%
+  subset(wi.ep <0.05)->pe
+```
+##
+
+
+##Diff abundance on Pectin
+###Aldex clusters against each other
+```{r, message=FALSE}
+##loop over all donors (are called repsodners anyway ;)
+
+  all_trp_gen_sub <-trp_species[ ,trp_species$tryptophan %in% c("Trp") &
+                               trp_species$substrate %in% c("PE") & 
+                           trp_species$prod %in% c("nothing", "IPA_ILA")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$prod)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_trp <- data.frame(x_tt, x_effect)
+      
+#######
+    all_trp_gen_sub <-trp_species[ ,trp_species$tryptophan %in% c("no-Trp")  &
+                               trp_species$substrate %in% c("PE") & 
+                           trp_species$prod %in% c("nothing", "IPA_ILA")]
+
+       x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$prod)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out_no_trp <- data.frame(x_tt, x_effect)
+     
+```
+
+```{r}
+aldex_out_trp%>%
+  subset(wi.ep <0.05)%>%
+  mutate(tryptophan = "Trp")->aldex_out_trp
+
+aldex_out_no_trp%>%
+  subset(wi.ep < 0.05)%>%
+  mutate(tryptophan = "no-Trp")->aldex_out_no_trp
+
+diff_pectin<-rbind(aldex_out_trp, aldex_out_no_trp)%>%
+  rownames_to_column("rowname")
+```
+
+```{r}
+tax %>%
+  rownames_to_column("rowname")%>%
+  subset(Species %in% "UCG-003 Genus")
+   # subset(rowname %in% c("ASV0235", "ASV0165", "ASV0524", "ASV1802", "ASV3197", "ASV3741"))#C.birfementans
+  # subset(rowname %in% c("ASV1148", "ASV0867", "ASV0571", "ASV0416"))#C. sporogenes
+#subset(rowname %in% c("ASV1148", "ASV0867	"))#C. botulinum
+# subset(rowname %in% c("ASV0524"))#p. assacharolyticus
+# subset(rowname %in% c("ASV0524", "ASV0165"))
+# subset(rowname %in% c("ASV0524", "ASV0165", "ASV0235"))
+```
+
+
+```{r}
+ unloadNamespace("mia")
+
+
+tax <- as.data.frame(tax_table(ps_strain_filt))%>%
+  rownames_to_column("rowname")
+
+phylo_trp%>%
+  physeq_glom_rename(taxrank = "Strain", 
+                     speedyseq = T)%>%
+   microbiome::transform("clr") %>% 
+  psmelt()%>%
+  left_join(., tax)%>%
+  # subset(prod %in% c("nothing", "IPA_ILA"))%>%
+  subset(tryptophan %in% c("no-Trp","Trp"))%>%
+  subset(!substrate %in% c("LT", "FO", "SU"))%>%
+   # subset(substrate %in% c( "PE"))%>%
+  subset(Genus %in% c("Intestinibacter"))%>%
+  mutate(Species = reorder(Species, Abundance))%>%
+  ggplot(aes(y=donor_name, x=Abundance))+
+ geom_point(aes(colour=substrate, group=tryptophan), position = position_dodge(0.9))+
+  geom_boxplot(aes(fill=tryptophan), outlier.shape =NA, alpha=0.5)+
+  facet_grid( rows=vars(donor_name), scales = "free")+
+  geom_vline(xintercept = 0)+
+   theme(axis.text.y= element_text(size = 15), 
+              axis.title.y = element_text(size=15), 
+              axis.title.x = element_text(size=15),
+              axis.text.x = element_text(size=15),
+              legend.text = element_text(size = 15),
+              legend.title = element_text(size= 15),
+              plot.title = element_text(size=15), 
+            panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA))+
+  ggtitle("Clr-abundances in the two clusters")+
+  scale_fill_manual(values=c( "coral3", "cyan4", "green3", "darkgoldenrod2", "black"))
+
+ggsave(filename = "diffabund_clusterss.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 30,
+       height = 30,
+       units = c("cm"))
+```
+
+```{r}
+ps_strain_filt%>%
+  physeq_glom_rename(taxrank = "Species", 
+                     speedyseq = T)%>%
+   microbiome::transform("clr") %>% 
+  psmelt()%>%
+  left_join(., tax)%>%
+  # subset(prod %in% c("nothing", "IPA_ILA"))%>%
+  subset(tryptophan %in% c("Trp", "no-Trp"))%>%
+   subset(!substrate %in% c( "FO", "LT", "SU"))%>%
+  subset(Species %in% "Intestinibacter bartlettii")%>%
+  mutate(Species = reorder(Species, Abundance))%>%
+  ggplot(aes(y=donor_name, x=Abundance))+
+ geom_point(aes(colour=substrate, group=tryptophan), position = position_dodge(0.9))+
+  geom_boxplot(aes(fill=tryptophan), outlier.shape =NA, alpha=0.5)+
+   theme(axis.text.y= element_text(size = 15), 
+              axis.title.y = element_text(size=15), 
+              axis.title.x = element_text(size=15),
+              axis.text.x = element_text(size=15),
+              legend.text = element_text(size = 15),
+              legend.title = element_text(size= 15),
+              plot.title = element_text(size=15), 
+            panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA))+
+  ggtitle("Clr-abundances in the two clusters")+
+  scale_fill_manual(values=c( "coral3", "cyan4", "green3", "darkgoldenrod2"))+
+  facet_grid(cols=vars(tryptophan))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+###Aldex - for each donor indulvidually => for heatmap
+```{r, message=FALSE}
+##loop over all donors (are called repsodners anyway ;)
+responders<- unique(meta_trp_new$donor_name)
+all_trp_gen <-data.frame(matrix(ncol=14, nrow=0))
+
+for (i in (1:length(responders))){
+  all_trp_gen_sub <-trp_gen[ ,trp_gen$donor_name %in% c(responders[i])]
+
+ 
+    result_name <- paste(responders[i])
+   
+      x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$tryptophan)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out <- data.frame(x_tt, x_effect)
+      
+      result <-aldex_out
+      result[,14] <- result_name
+
+      names(result)[6]<-paste0("rab.win.no")
+      names(result)[7]<-paste0("rab.win.Trp")
+      result$genus<-row.names(result)
+      all_trp_gen<-rbind(all_trp_gen, result)
+}
+
+all_trp_gen ->out
+
+all_trp_gen%>%
+  filter(we.ep < 0.05)%>%
+  filter(rab.win.no > 5| rab.win.Trp >5)->sig
+```
+## Vulcano plot
+```{r}
+# library(ggrepel)
+out%>%
+ggplot(aes(x=diff.btw, y=we.ep))+
+  geom_point(data = subset(out, we.ep < 0.05 ), colour="cyan4", alpha=0.75, size=3)+
+  geom_point(data = subset(out, we.ep > 0.05 ), colour="grey", alpha=0.75, size=3)+
+  geom_hline(yintercept = 0.05, linetype = "dashed", colour = "red")+
+  geom_vline(xintercept = 0.0, linetype = "dashed", colour = "grey")+
+      geom_text_repel(data = subset(out, we.ep < 0.05 ), aes(label = genus), fontface="italic", size=5)+
+      theme(axis.text.y= element_text(size = 20), 
+              axis.title.y = element_text(size=20), 
+              axis.title.x = element_text(size=20),
+              axis.text.x = element_text(size=20),
+              legend.text = element_text(size = 20),
+              legend.title = element_text(size= 20),
+              plot.title = element_text(size=20), 
+            panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA))+
+      xlab("Median clr-differences")+ylab("p-value")+scale_y_continuous(
+    trans  = compose_trans("log10", "reverse"),
+    labels = label_log()
+  ) +
+      ggtitle("Trp-treated vs. controls (responders)")+
+  facet_grid(cols=vars(V14))
+
+```
+
+
+
+## Heatmap & with donor clustering using hclust
+```{r}
+unloadNamespace("mia")
+out[, c("V14", "genus", "diff.btw")]%>%
+  subset(genus %in% unique(sig$genus))->mat
+
+rownames(mat)<-NULL
+
+####hclust donornames
+mat%>%
+  pivot_wider(values_from = diff.btw, names_from = genus) ->sub
+
+sub%>%
+  column_to_rownames(var = 'V14') %>% 
+  as.matrix()->df_diff
+diff_dendro <- as.dendrogram(hclust(d = dist(x = df_diff)))
+# Create dendro
+dendro_plot_donor <- ggdendrogram(data = diff_dendro, rotate = F)
+dendro_plot_donor
+diff_order <- order.dendrogram(diff_dendro)
+
+out%>%
+  subset(genus %in% unique(sig$genus))->heat_donor
+  
+heat_donor%>%
+  left_join(., setNames(meta_trp_new[, c("donor_name",  "cluster_hclust")], c("V14", "cluster_hclust")))%>%
+   mutate(genus = reorder(genus, diff.btw))->sub
+
+sub%>%
+  ggplot(aes(y=genus, x=V14, fill=diff.btw))+
+  geom_tile()+
+  geom_text(data = subset(sub, we.ep < 0.05 ), label="*")+
+   scale_fill_gradientn(colors = c( "coral", "white", "cyan4"),  na.value= "grey", values = rescale(c(min(heat_donor$diff.btw) , 0, max(heat_donor$diff.btw))))+
+  theme(axis.text.y= element_text(size=15), 
+              axis.title.y = element_blank(), 
+              axis.title.x = element_blank(),
+              axis.text.x = element_text(size=15, angle=90),
+              legend.text = element_text(size = 15),
+              legend.title = element_text(size= 15),
+              plot.title = element_text(size=15), 
+            panel.background = element_rect(fill="gray93"),
+        panel.border=element_rect(fill=NA),
+        panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank())+
+  facet_grid(cols=vars(cluster_hclust), scales="free", space="free")+
+  ggtitle("Differential abundance - Trp vs. control")
+
+ggsave(filename = "heat.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 20,
+       height = 19,
+       units = c("cm"))
+
+```
+
+### aldex based on substarte
+```{r}
+# responders <- c("YFKF",  "EAJK", "KTRS", "TPSJ", "HXBH" ,  "JCDD", "GCVJ", "YQRV")
+responders<- c( "AG"   , "bGlc" , "IN"   , "Muc"  , "Nut"   ,"Pea"   ,"PE"   , "SS"  , "XY"  ,  "H2O" )
+result_sub <-data.frame(matrix(ncol=14, nrow=0))
+
+for (i in (1:length(responders))){
+  all_trp_gen_sub <-trp_gen[ ,trp_gen$substrate %in% c(responders[i])]
+
+ 
+    result_name <- paste(responders[i])
+   
+      x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$tryptophan)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out <- data.frame(x_tt, x_effect)
+      
+      result <-aldex_out
+      result[,14] <- result_name
+
+      names(result)[6]<-paste0("rab.win.no")
+      names(result)[7]<-paste0("rab.win.Trp")
+      result$genus<-row.names(result)
+      result_sub<-rbind(result_sub, result)
+  }
+
+
+result_sub ->out_substrate
+
+result_sub%>%
+  filter(we.ep < 0.05)->sig_substrate
+
+```
+
+```{r}
+out_substrate[, c("V14", "genus", "diff.btw")]%>%
+  subset(genus %in% unique(sig_substrate$genus))->mat
+
+rownames(mat)<-NULL
+
+####hclust donornames
+mat%>%
+  pivot_wider(values_from = diff.btw, names_from = genus) ->sub
+
+sub%>%
+  column_to_rownames(var = 'V14') %>% 
+  as.matrix()->df_diff
+diff_dendro <- as.dendrogram(hclust(d = dist(x = df_diff)))
+# Create dendro
+dendro_plot_donor <- ggdendrogram(data = diff_dendro, rotate = F)
+dendro_plot_donor
+diff_order <- order.dendrogram(diff_dendro)
+
+
+
+out_substrate%>%
+  subset(genus %in% unique(sig_substrate$genus))->heat_sub
+
+heat_sub%>%
+   mutate(V14 =  factor(V14, levels = sub$`V14`[diff_order], ordered = TRUE),
+          genus = reorder(genus, diff.btw))%>%
+  ggplot(aes(y=genus, x=V14, fill=diff.btw))+
+  geom_tile()+
+  geom_text(data = subset(heat_sub, we.ep < 0.05 ), label="*")+
+   scale_fill_gradientn(colors = c( "coral", "white", "cyan4"),  na.value= "grey", values = rescale(c(min(heat_sub$diff.btw) , 0, max(heat_sub$diff.btw))))+
+  theme(axis.text.y= element_text(size=15), 
+              axis.title.y = element_blank(), 
+              axis.title.x = element_blank(),
+              axis.text.x = element_text(size=15, angle=90),
+              legend.text = element_text(size = 15),
+              legend.title = element_text(size= 15),
+              plot.title = element_text(size=15), 
+            panel.background = element_rect(fill="gray93"),
+        panel.border=element_rect(fill=NA),
+        panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+        )
+
+ggsave(filename = "heat_substrate.jpeg",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       width = 20,
+       height = 14,
+       units = c("cm"))
+  
+```
+###Analyse non-responders vs. responders
+
+```{r}
+all_trp_gen_sub <-trp_gen[ ,trp_gen$responder_group %in% c("N1", "R1") & trp_gen$tryptophan %in% c("no-Trp")]
+
+   
+      x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$responder_group)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out <- data.frame(x_tt, x_effect)
+      
+     
+aldex_out%>%
+  filter(we.ep < 0.05)->sig_1
+
+
+
+```
+```{r}
+all_trp_gen_sub <-trp_gen[ , trp_gen$tryptophan %in% c("no-Trp")]
+
+   
+      x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$responder)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out <- data.frame(x_tt, x_effect)
+      
+     
+aldex_out%>%
+  filter(we.ep < 0.05)->sig_2
+
+
+
+```
+
+```{r}
+all_trp_gen_sub <-trp_gen[ , trp_gen$tryptophan %in% c("no-Trp") &  trp_gen$responder_group %in% c("R1", "R2")]
+
+   
+      x <- aldex.clr(
+      reads = assay(all_trp_gen_sub),
+     all_trp_gen_sub$responder_group)
+
+      x_tt <- aldex.ttest(
+        x, 
+        paired.test = FALSE, 
+        verbose = FALSE)
+      
+      x_effect <- aldex.effect(x, CI = TRUE, verbose = FALSE)
+      aldex_out <- data.frame(x_tt, x_effect)
+      
+     
+aldex_out%>%
+  filter(we.ep < 0.05)->sig_3
+```
+
+```{r}
+unloadNamespace("mia")
+
+```
+
