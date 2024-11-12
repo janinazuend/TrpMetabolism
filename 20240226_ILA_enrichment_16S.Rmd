@@ -49,7 +49,9 @@ ps_strain_filt%>%
                           nreads_display = 2399,
                        first_n = nsamples(phyloseq)) -> lib
 
-
+###at Benoit
+###replace reads with the proper column name of lib (i dont remember by heart)
+mean(lib$reads)
 ```
 
 
