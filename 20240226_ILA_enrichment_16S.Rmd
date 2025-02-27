@@ -12,27 +12,18 @@ output: html_document
 # library(DECIPHER)
 library(phyloseq)
 library(ggh4x)
+library(dplyr)
 
-
-list.files("P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/ILA_enrichments/upload")
 ```
 
 ```{r}
-phylo_test <-readRDS("P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/ILA_enrichments/phyloseq_phylo.RDS")
-
-
+phylo_test <-readRDS("C:/Users/zuendj/Desktop/personal/ETH/phyloseq_phylo.RDS")
 
 phylo_test%>%
   physeq_add_metadata(physeq = .,
-                      metadata = "P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/ILA_enrichments/map_run2024..xlsx" %>%
+                      metadata = "C:/Users/zuendj/Desktop/personal/ETH/map_run2024..xlsx" %>%
                         readxl::read_xlsx(),
                       sample_column = "sample_name") -> phylo_test
-
-```
-
-```{r}
-write.xlsx( as.data.frame(refseq(phylo_test))%>%
-              rownames_to_column("ASV"), file ="P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/enriched_asvs/asvs_ILA.xlsx")
 ```
 
 ```{r}
@@ -49,9 +40,9 @@ ps_strain_filt%>%
                           nreads_display = 2399,
                        first_n = nsamples(phyloseq)) -> lib
 
-###at Benoit
-###replace reads with the proper column name of lib (i dont remember by heart)
-mean(lib$reads)
+###calculate mean lib size
+calc<-lib$df
+sd(calc$LibrarySize)
 ```
 
 
@@ -70,27 +61,44 @@ ps_strain_filt %>%
 unique(sample.data.frame(ILA_enrich)$sample_name)
 ```
 
+##Taxonomic data
 ```{r}
+##fix Tax table
 noNA = !is.na(tax_table(ILA_enrich)[,"Genus"]) & !is.na(tax_table(ILA_enrich)[,"Species"])
 tax_table(ILA_enrich)[noNA][,"Species"] = paste(tax_table(ILA_enrich)[noNA][,"Genus"], tax_table(ILA_enrich)[noNA][,"Species"])
 ILA_enrich%>%
   tax_fix()->ILA_enrich
 
 
-
 as.data.frame(tax_table(ILA_enrich))%>%
   mutate(Species = ifelse(Species == "unknown ", Genus , Species))->tax
 
-
 tax_table(ILA_enrich)<-as.matrix(tax)
 
+meta_ILA<-sample.data.frame(ILA_enrich)
 
+##subsample selected samples
 ILA_enrich%>%
-  subset_samples((condition_tryptophan %in% c("ILA_5") &  condition_2 %in% c("control", "48h"))   )%>%
-  subset_samples(!condition %in% "pectin_mono")%>%
+  subset_samples((condition_tryptophan %in% c("ILA_5", "no_trp") &  condition_2 %in% c("control", "48h")))%>%
+  subset_samples(!condition %in% "pectin_mono")-> ILA_sub
+
+###order the data frame for plot
+meta_ILA<-sample.data.frame(ILA_sub)
+
+meta_ILA%>%
+  mutate(condition_combined = paste0(condition_tryptophan, "_", condition))%>%
+  mutate(condition_combined =factor(condition_combined, levels=c("no_trp_H2O" ,  
+                                                        "no_trp_6C+muc"  ,  
+                                                        "ILA_5_H2O"    ,
+                                                        "ILA_5_6C+muc" ,  
+                                                        "ILA_5_pectin"   ,
+                                                        "ILA_5_pectin_mono")))->meta_ILA
+sample_data(ILA_sub)<-meta_ILA
+
+ILA_sub%>%
    microViz::comp_barplot(
     tax_level = "Genus",
-    label = "condition",
+    label = "condition_combined",
     sample_order = "default",
     tax_order = sum, 
     n_taxa = 10,
@@ -110,7 +118,8 @@ p_hist +
         axis.title.x = element_text(),
         legend.text = element_text(vjust=1, hjust=0, face="italic"),
         legend.title = element_text(),
-        plot.title = element_text(), panel.spacing = unit(0.2, "cm"),
+        plot.title = element_text(), 
+        # panel.spacing.x = unit(0.05, "cm"),
         strip.background = element_rect(colour = "white", fill = "white", 
                                          linetype = "solid")) + 
   scale_y_continuous(breaks=c(0.25, 0.5, 0.75))+
@@ -122,31 +131,165 @@ p_hist +
 p_hist_ILA
 
   ggsave(filename = "ILA.jpeg",
-       path =  "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       path =  "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output_revision",
        width = 60,
        height = 17,
        units = c("cm"))
   
 
 ```
-
+## IPA data
 ```{r}
-library(cowplot)
-concentrations<-left_join(read.xlsx( "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240227_Indole_data_calculations.xlsx"),
-                          read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
+# library(cowplot)
+concentrations<-left_join(read.xlsx("C:/Users/zuendj/Desktop/personal/ETH/20240227_Indole_data_calculations.xlsx"),
+                          read.xlsx("C:/Users/zuendj/Desktop/personal/ETH/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
   subset(time %in% "48h")%>%
   subset(stress %in% c("no", "control"))%>%
   subset(time %in% c("48h"))%>%
   subset(!donor_name_old %in% "blank")%>%
-  subset(condition_tryptophan %in% c("ILA_5") & stress %in% c("no", "control"))
+  subset(condition_tryptophan %in% c("ILA_5", "no_trp"))%>%
+  mutate(condition_combined = paste0(condition_tryptophan, "_", condition))
 
 
 concentrations%>%
   subset(!condition %in% "pectin_mono")%>%
   # subset(stress %in% "no" & !donor_name %in% "blank" & !condition %in% "pectin_mono")%>%
-  mutate(condition =factor(condition, levels=c("6C+muc",  "H2O","pectin")))%>%
+  mutate(condition_combined =factor(condition_combined, levels=c("no_trp_H2O" ,  
+                                                        "no_trp_6C+muc"  ,  
+                                                        "ILA_5_H2O"    ,
+                                                        "ILA_5_6C+muc" ,  
+                                                        "ILA_5_pectin"   ,
+                                                        "ILA_5_pectin_mono")))%>%
+  gather( metabolite, conc, "Indolelactate_mM":"Tryptophan_mM" )%>%
+  subset(metabolite %in% c("Indolelactate_mM", "Indolepropionate_mM"))%>%
+
+   ggplot(aes(y = conc,
+             x = condition_combined)) +
+  facet_nested( cols=vars(donor_name), scales="free", space="free") +
+  geom_bar(stat="identity", aes(fill= metabolite), colour="black")+
+  ylab("Indolepropionate [mM]") + xlab(NULL) +
+  theme(text= element_text(size = 15), 
+            axis.text.x = element_text( angle=90, vjust=0.2, hjust=1),
+            legend.text = element_text( hjust=0),
+          # strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA),
+         # panel.spacing.x = unit(0.15, "cm"),
+          strip.background = element_blank())+
+  labs(colour="Clusters")+
+ scale_x_discrete(labels = c("no_trp_H2O"  = expression(paste(H[2]*O))  , 
+                             "no_trp_6C+muc" = "6c+muc" , 
+                             "ILA_5_H2O"  =  expression(paste(H[2]*O))  ,
+                             "ILA_5_6C+muc" ="6c+muc" , 
+                             "ILA_5_pectin"  = "Pectin" ))+
+  scale_alpha_manual(values=c(1, 0.7))+
+  ylab("Metabolite [mM]")+
+  scale_fill_manual(values = c("cyan4" ,"bisque3" ), labels = c( "ILA", "IPA"), name="Metabolite")->IPA_ila
+IPA_ila
+```
+
+```{r}
+concentrations%>%
+  subset(condition_tryptophan %in% "ILA_5")%>%
+  mutate(ratio = Indolepropionate_mM / (Indolelactate_mM + Indolepropionate_mM) )-> ratio
+
+mean(ratio$ratio)
+sd(ratio$ratio)
+```
+
+
+```{r}
+# library(cowplot)
+concentrations<-left_join(read.xlsx("C:/Users/zuendj/Desktop/personal/ETH/20240227_Indole_data_calculations.xlsx"),
+                          read.xlsx("C:/Users/zuendj/Desktop/personal/ETH/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
+  subset(time %in% "48h")%>%
+  subset(stress %in% c("no", "control"))%>%
+  subset(time %in% c("48h"))%>%
+  subset(!donor_name_old %in% "blank")%>%
+  subset(condition_tryptophan %in% c("ILA_5", "no_trp"))%>%
+  mutate(condition_combined = paste0(condition_tryptophan, "_", condition))
+
+
+concentrations%>%
+  subset(!condition %in% "pectin_mono")%>%
+  # subset(stress %in% "no" & !donor_name %in% "blank" & !condition %in% "pectin_mono")%>%
+  mutate(condition_combined =factor(condition_combined, levels=c("no_trp_H2O" ,  
+                                                        "no_trp_6C+muc"  ,  
+                                                        "ILA_5_H2O"    ,
+                                                        "ILA_5_6C+muc" ,  
+                                                        "ILA_5_pectin"   ,
+                                                        "ILA_5_pectin_mono")))%>%
+
+   ggplot(aes(y = blank_corr,
+             x = condition_combined)) +
+  facet_nested( cols=vars(donor_name), scales="free", space="free") +
+  geom_bar(stat="identity", fill= "grey", colour="black")+
+  ylab("Metabolite [mM]") + xlab(NULL) +
+  theme(text= element_text(size = 15), 
+            axis.text.x = element_text( angle=90, vjust=0.2, hjust=1),
+            legend.text = element_text( hjust=0),
+          # strip.text.x = element_blank(), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA),
+         # panel.spacing.x = unit(0.15, "cm"),
+          strip.background = element_blank())+
+  labs(colour="Clusters")+
+ scale_x_discrete(labels = c("no_trp_H2O"  = expression(paste(H[2]*O))  , 
+                             "no_trp_6C+muc" = "6c+muc" , 
+                             "ILA_5_H2O"  =  expression(paste(H[2]*O))  ,
+                             "ILA_5_6C+muc" ="6c+muc" , 
+                             "ILA_5_pectin"  = "Pectin" ))+
+  scale_alpha_manual(values=c(1, 0.7))+
+  ylab(expression(OD[600]))->OD_ila
+```
+
+
+##combine the two plots
+```{r}
+library(cowplot)
+plot_grid(p_hist_ILA + theme(axis.ticksx =  element_blank(), 
+                           axis.title.x = element_blank(),
+                           axis.text.x =  element_blank(),
+                           legend.position = "none"
+                        )+  
+            force_panelsizes(rows =unit(3, "cm")),
+          
+             
+          OD_ila+theme(axis.ticks.x =  element_blank(), 
+                           axis.title.x = element_blank(),
+                           axis.text.x =  element_blank(),
+                           legend.position = "none" )+  
+            force_panelsizes(rows =unit(1.5, "cm")),
+          
+             
+          IPA_ila+theme(strip.text = element_blank(),
+                         legend.position = "none" )+  
+            force_panelsizes(rows =unit(2.5, "cm")),
+          
+          nrow=3, 
+        align= "v"
+          )
+
+
+ggsave(filename = paste( "ILA_taxabar.jpeg"),
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output_revision",
+       width = 17,
+       height = 30,
+       units = c("cm"))
+```
+
+```{r}
+concentrations%>%
+  subset(!condition %in% "pectin_mono")%>%
+  # subset(stress %in% "no" & !donor_name %in% "blank" & !condition %in% "pectin_mono")%>%
+  mutate(condition_combined =factor(condition_combined, levels=c("no_trp_H2O" ,  
+                                                        "no_trp_6C+muc"  ,  
+                                                        "ILA_5_H2O"    ,
+                                                        "ILA_5_6C+muc" ,  
+                                                        "ILA_5_pectin"   ,
+                                                        "ILA_5_pectin_mono")))%>%
    ggplot(aes(y = Indolepropionate_mM,
-             x = condition)) +
+             x = condition_combined)) +
   facet_nested( cols=vars(donor_name), scales="free", space="free") +
   geom_bar(stat="identity", fill="bisque3", colour="black")+
   ylab("Indolepropionate [mM]") + xlab(NULL) +
@@ -156,49 +299,26 @@ concentrations%>%
           # strip.text.x = element_blank(), 
         panel.background = element_rect(fill="white"),
         panel.border=element_rect(fill=NA),
+         # panel.spacing.x = unit(0.15, "cm"),
           strip.background = element_blank())+
   labs(colour="Clusters")+
- scale_x_discrete(labels = c( "H2O"=expression(paste(H[2]*O)), "pectin"="Pectin"))+
+ scale_x_discrete(labels = c("no_trp_H2O"  = expression(paste(H[2]*O))  , 
+                             "no_trp_6C+muc" = "6c+muc" , 
+                             "ILA_5_H2O"  =  expression(paste(H[2]*O))  ,
+                             "ILA_5_6C+muc" ="6c+muc" , 
+                             "ILA_5_pectin"  = "Pectin" ))+
   scale_alpha_manual(values=c(1, 0.7))+
   ylab("IPA [mM]")->IPA_ila
 ```
 
-```{r}
-plot_grid(p_hist_ILA + theme(axis.ticksx =  element_blank(), 
-                           axis.title.x = element_blank(),
-                           axis.text.x =  element_blank(),
-                           legend.position = "none"
-                        )+  
-            force_panelsizes(rows =unit(3, "cm")),
-          
-             
-          IPA_ila+theme(strip.text = element_blank()
-                              )+  
-            force_panelsizes(rows =unit(1.5, "cm")),
-      
-          
-          
-          nrow=2, 
-        align= "v"
-          )
-
-
-ggsave(filename = paste( "ILA_taxabar.jpeg"),
-       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
-       width = 15,
-       height = 25,
-       units = c("cm"))
-```
-
-
 
 
 
 
 
 ```{r}
-concentrations<-left_join(read.xlsx( "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240227_Indole_data_calculations.xlsx"),
-                          read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
+concentrations<-left_join(read.xlsx( "C:/Users/zuendj/Desktop/personal/ETH/20240227_Indole_data_calculations.xlsx"),
+                          read.xlsx("C:/Users/zuendj/Desktop/personal/ETH/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
   subset(time %in% "48h")%>%
   subset(stress %in% c("no", "control"))%>%
   subset(time %in% c("48h"))%>%
@@ -217,6 +337,7 @@ concentrations[, c("condition", "condition_tryptophan", "donor_name", "Delta_Ind
 
 
 #####
+
 ```{r}
 ILA_enrich%>%
   subset_samples((condition_tryptophan %in% c("ILA_5", "ILA_0.5") & 
@@ -313,7 +434,7 @@ fil_corr%>%
   mutate(Genus = reorder(Genus, freq))%>%
   ggplot(aes(x=donor_name, y=Species))+
    facet_grid(rows=vars(Species), scales = "free", space="free")+
-  geom_point(aes(fill=corr, size=p_value),colour="black", alpha=0.65,  shape=21, width=0.1, height=0.1)+
+  geom_point(aes(fill=corr),colour="black", alpha=0.65,  size=5, shape=21, width=0.1, height=0.1)+
   theme(text = element_text(size=15),
         axis.text.x = element_text(angle = 90, vjust=0.5),
         axis.text.y= element_text(face="italic"),
@@ -324,14 +445,14 @@ fil_corr%>%
         strip.text.y= element_blank(),
         # panel.spacing = unit(0, "lines"),
         strip.background = element_blank())+
-  scale_size_continuous(range = c(5, 1)) +
+  # scale_size_continuous(range = c(5, 1)) +
   scale_fill_gradientn(colors = c(  "white", "cyan4"), values = rescale(c( -1, 0, 1)))+
   # geom_hline(yintercept = c(1.5,2.5,3.5, 4.5,5.5, 6.5, 7.5,8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5, 22.5, 23.5, 24.5, 25.5, 26.5, 27.5, 28.5),  colour="grey", linetype="dashed", alpha=.5, size=0.5)+
   labs(fill="R", size="P-value")
 
 
 ggsave(filename = "correlating_taxa_ILA..jpeg",
-       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output_revision",
        width = 11,
        height = 5,
        units = c("cm"))

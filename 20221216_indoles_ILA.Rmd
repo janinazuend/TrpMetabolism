@@ -36,8 +36,8 @@ setwd("C:/Users/zuendj/Desktop/03_data R/wp3/input")
 #########################################
 #load the data
 ########################################
-metaboliteswide <- left_join(read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240103_Indole_data.xlsx", sheet = "indole_data_analysis"),
- read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
+metaboliteswide <- left_join(read.xlsx("C:/Users/zuendj/Desktop/personal/ETH/20240103_Indole_data.xlsx", sheet = "indole_data_analysis"),
+ read.xlsx("C:/Users/zuendj/Desktop/personal/ETH/20240103_Indole_data_OD_HPLC.xlsx", sheet = "indole_data")[c(15:98), c("First.Injection", "blank_corr")])%>%
   subset(time %in% "48h")
 ```
 
@@ -75,7 +75,7 @@ metaboliteswide %>%
 ```
 
 ```{r}
-write.xlsx(df_concentrations, "P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/02_Enrichment_ILA/20240227_Indole_data_calculations.xlsx")
+write.xlsx(df_concentrations, "C:/Users/zuendj/Desktop/personal/ETH/20240227_Indole_data_calculations.xlsx")
 ```
 
 #OD
@@ -106,7 +106,7 @@ sub%>%
   shapiro_test(Indolepropionate_mM)
 
 sub%>%
-  t_test(Indolepropionate_mM ~ condition)%>%
+  t_test(Indolepropionate_mM ~ condition, paired = T)%>%
   add_significance()%>%
   add_xy_position()->stat
 
@@ -146,7 +146,7 @@ aggregate(sub$Indolepropionate_mM, by = list(sub$condition), FUN =sd)
 # round(sd(calculare$conc), digits =2)
 ```
 
-
+#######
 ##Co cultivation
 ```{r}
 metaboliteswide <- read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/04_pureculture_screening/20240312_pure_culture_screening_uhplc.xlsx", sheet = "co-culture")
@@ -222,6 +222,7 @@ left_join(df_concentrations, left_join(setNames(aggregate(df_concentrations$conc
   scale_x_discrete(labels = c("C.s"= "Clostridium sporogenes", "L.e" = "L. eligens","L.e + C.s" ="Co-culture"))
 
 ```
+
 ### Co-culture composition analysis
 ```{r}
 phylo <-readRDS("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/06_co_cultivation_ILA/sequencing/phyloseq.RDS")
@@ -340,9 +341,10 @@ ggsave(filename = paste( "Co-culture_growth.jpeg"),
        units = c("cm"))
 ```
 
+#########
 #Pure culture screening
 ```{r}
-pure_cult <- read.xlsx("P:/Shared_documents/Janina_Zuend/08_phd/14_working_package_3/04_pureculture_screening/import/20240507_pure_culture_screening_merged_data.xlsx", sheet = "R_import")%>%
+pure_cult <- read.xlsx("C:/Users/zuendj/Desktop/personal/ETH/20240507_pure_culture_screening_merged_data.xlsx", sheet = "R_import")%>%
   separate(., col=condition, into = c("tryptophan",  "C_source"), sep ="_")
 ```
 
@@ -376,7 +378,6 @@ round(sd(sub$ILA_mM), digits=3)
 
 ```{r}
 pure_cult%>%
-   
   subset(C_source %in% "3C" )%>%
   subset(growth %in% "yes") %>%
   subset(!Species %in% c("Control", "control"))%>%
@@ -385,6 +386,7 @@ pure_cult%>%
   mutate(Species = ifelse(strain == "DSM 19262", paste(Species, strain), Species))%>%
   mutate(Species = ifelse(Species == "[Clostridium = Tyzzerella] nexile", paste("Tyzzerella nexile"), Species))%>%
    mutate(Species = ifelse(Species == "Lachnospira pectinoshiza", "Lachnospira pectinoschiza", Species))%>%
+  mutate(Species = ifelse(Species == "Enterocloster sp.", "Enterocloster sp. FBT_B", Species))%>%
   mutate(Species = ifelse(strain == "FBT_C", paste(Species, strain), Species))%>%
   mutate(ILA_mM = as.numeric(ILA) * df_calibration[1,c("ILA")] *4,
          Indole_mM = as.numeric(Indole) * df_calibration[1,c("Indole")] *4,
@@ -396,12 +398,14 @@ pure_cult%>%
   mutate(tryptophan = ifelse(tryptophan == "Trp", "Tryptophan", tryptophan))%>%
   mutate(tryptophan = factor (tryptophan, levels = c("Tryptophan", "ILA")))%>%
   mutate(metabolite = factor(metabolite, levels = c("Indole_mM", "IA_mM", "ILA_mM", "IPA_mM")))%>%
-  mutate(Species = factor(Species))%>%
-  # mutate(Species = reorder(Species, desc(IPA)))%>%
+  mutate(Species = factor(Species))->pure_cultures_heat
+
+pure_cultures_heat%>%
+  mutate(Species = reorder(Species, desc(IPA)))%>%
   ggplot(aes(y=Species, x=metabolite, fill =conc))+
   geom_tile(colour="black", aes(width=1, height = 1))+
   scale_fill_gradient(low = "lightgrey",
-  high = "cyan4", na.value = "gray95", name="Concentration [mM]")+
+  high = "black", na.value = "gray95", name="Concentration [mM]")+
   facet_grid(col=vars(tryptophan), rows=vars(cspor), scales="free",  space="free")+
   theme(text= element_text(size = 15), 
         panel.background = element_rect(fill="white"),
@@ -417,13 +421,53 @@ pure_cult%>%
   scale_x_discrete(labels= c("IPA_mM"="IPA", "IA_mM"="IAA", "ILA_mM"="ILA", "Indole_mM"="Indole"))
   
 ggsave(filename = paste( "purestains.jpeg"),
-       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output_revision",
        width = 12.5,
        height = 13,
        units = c("cm"))
 unique(sub$Strain)
   
 ```
+#Display od of pure strain cultures
+
+```{r}
+
+
+
+left_join(setNames(aggregate(pure_cultures_heat$OD, by=list(pure_cultures_heat$tryptophan, pure_cultures_heat$Species, pure_cultures_heat$cspor), FUN=mean, na.rm=T), c( "substrate", "Species", "cspor","mean")), 
+          setNames(aggregate(pure_cultures_heat$OD, by=list( pure_cultures_heat$tryptophan, pure_cultures_heat$Species, pure_cultures_heat$cspor), FUN=sd, na.rm=T), c("substrate", "Species", "cspor", "sd")))%>%
+  left_join(., setNames(aggregate(pure_cultures_heat$IPA, by=list(pure_cultures_heat$Species), FUN=mean, na.rm = T ), c( "Species","IPA")))%>%
+  mutate(Species = reorder(Species, desc(IPA)))%>%
+ 
+   ggplot(aes(x=Species, y=mean))+
+   geom_bar(stat = "summary", fun.y = "mean",  aes(fill= substrate), colour="black", position = position_dodge())+
+  geom_errorbar( aes(ymin=mean, ymax=mean+sd, position=substrate), width=0.1, position = position_dodge(1))+
+  coord_flip()+
+  theme(text= element_text(size = 15), 
+        panel.background = element_rect(fill="white"),
+        panel.border=element_rect(fill=NA), 
+        strip.background = element_blank(),
+        strip.text.y = element_blank(),
+        legend.text = element_text(),
+        axis.title  = element_blank(),
+        axis.ticks.y =element_blank(),
+        axis.text.y = element_text( face="italic"),
+        axis.text.x = element_text(angle=45, vjust=1, hjust=1),
+        legend.position = "bottom",
+        legend.justification = "left")+
+  scale_x_discrete(labels= c("IPA_mM"="IPA", "IA_mM"="IAA", "ILA_mM"="ILA", "Indole_mM"="Indole"))+
+  scale_fill_manual(values= c( "indianred", "cyan4"))+
+   facet_grid( rows=vars(cspor), scales="free",  space="free")
+
+
+ggsave(filename = paste( "purestains_od.jpeg"),
+       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output_revision",
+       width = 10,
+       height = 11,
+       units = c("cm"))
+ 
+```
+
 
 ```{r}
 pure_cult%>%

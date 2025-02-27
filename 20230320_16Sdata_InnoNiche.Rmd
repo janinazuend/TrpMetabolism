@@ -12,6 +12,8 @@ library(ggpmisc)
 library(ggpubr)
 library(rstatix)
 library(scales)
+library(dplyr)
+library(microbiome)
 ```
 
 ```{r, echo =FALSE}
@@ -34,11 +36,11 @@ facet_labeller <- function(variable,value){
 
 ## Load Phyloseq
 ```{r}
-phylo_test <-readRDS("P:/Shared_documents/Janina_Zuend/08_phd/01_sequencing_data/PB_Inno_Niche/phyloseq_phylo.RDS")
+phylo_test <-readRDS("C:/Users/zuendj/Desktop/personal/ETH/phyloseq_phylo_2.RDS")
 # phylo_test <-readRDS("P:/Shared_documents/Janina_Zuend/08_phd/Raw_Data_PB/phyloseq/phyloseq.RDS")
 phylo_test%>%
   physeq_add_metadata(physeq = .,
-                      metadata = "P:/Shared_documents/Janina_Zuend/08_phd/Raw_Data_PB/01_metadata_files/metadata_file_TRYPTOPHAN_missing_1.xlsx" %>%
+                      metadata = "C:/Users/zuendj/Desktop/personal/ETH/metadata_file_TRYPTOPHAN_missing_1.xlsx" %>%
                       readxl::read_xlsx(),
                       sample_column = "sample_name") -> phylo_test
 
@@ -105,6 +107,18 @@ ps_strain_filt%>%
 ###replace reads with the proper column name of lib (i dont remember by heart)
 mean(lib$reads)
 ```
+```{r}
+phylo_test%>%
+  phyloseq_check_lib_size(data_color = "tryptophan",
+                          data_facet = NULL,
+                          nreads_display = 2399,
+                       first_n = nsamples(phyloseq)) -> lib
+
+df<-lib$df
+
+sd(df$LibrarySize)
+```
+
 
 ```{r}
 ps_strain_filt %>%
@@ -352,277 +366,9 @@ ggsave(filename = "legend.jpeg",
 
 
 
-###################
-#old code
-
-##Calculate the delta
-```{r}
-alphas%>%
-  subset(!substrate %in% "feces")-> cultures
-
-
-cultures[, c("donor_name", "substrate", "tryptophan", "observed", "diversity_shannon", "cluster_hclust")]%>%
-  pivot_wider(names_from = tryptophan, values_from = c(observed, diversity_shannon))%>%
-  mutate(diff_observed = observed_Trp - `observed_no-Trp`,
-         diff_shannon = diversity_shannon_Trp - `diversity_shannon_no-Trp`) -> delta
-```
-
-
-## Plot alpha diversities: ordered by donor
-```{r}
-
-mean<-aggregate(delta$diff_observed, by=list(delta$donor_name), FUN=mean)
-order_vector <- order(-mean$x)
-
-left_join(cultures, delta)%>%
-  subset(!substrate %in% c("feces" ,"LT", "SU", "FO"))%>%
-  mutate(donor_name = reorder(donor_name, diff_observed))%>%
-  group_by(donor_name) %>%
-  wilcox_test(data= .,
-  formula = observed ~ tryptophan,
-  )%>%
-  add_significance()%>%
-  add_xy_position(x="donor_name")->wil
 
 
 
-left_join(cultures, delta)%>%
-  subset(!substrate %in% c("feces","LT", "SU", "FO"))%>%
-  # mutate(donor_name = factor(donor_name, levels = mean$Group.1[order_vector]))%>%
-  mutate(donor_name = reorder(donor_name, diff_observed))%>%
-   # mutate(cluster_kmeans =factor(cluster_kmeans, levels=c( "2","3",  "1")))%>%
-  ggplot(aes(x = donor_name,
-             y = observed)) +
-  # facet_grid(scale="free", space="free_x", cols=vars(sample_type)) +
-  geom_boxplot(aes(fill=cluster_hclust, alpha=tryptophan), outlier.shape = NA) +
-  geom_point(aes(colour =substrate, group=tryptophan), position= position_jitterdodge(0.2), alpha=0.75,   size = 2)+
-  ylab("Observed ASVs") + xlab(NULL) +
-  theme(axis.text.y= element_text(size = 20), 
-            axis.title.y = element_text(size=20), 
-            axis.title.x = element_text(size=20),
-            axis.text.x = element_text(size=20, angle=90, vjust=0.2, hjust=1),
-            legend.text = element_text(size = 20),
-            legend.title = element_text(size= 20),
-            plot.title = element_text(size=20),
-          strip.text.x = element_blank(), 
-        panel.background = element_rect(fill="white"),
-        panel.border=element_rect(fill=NA))+
-  ggtitle("Alpha diversity")+
-  scale_x_discrete(labels = c('feces' = 'Feces', '7C' = '6C+Muc', '3C+Muc' = '3C+Muc', "Nut"="Nut", "SS"="SS", "7C-Muc"="6C", "3C"="3C", "H2O"=expression(paste(H[2]*O)), "Glc"="Glucose"))+
-  stat_pvalue_manual(wil,  label = "p.signif", label.size = 8, hide.ns = T)+
-  labs(colour="Clusters")+
-  scale_fill_manual(values = c("coral3", "cyan4"))+
-  scale_alpha_manual(values=c(1, 0.7))->alpha
 
 
-alpha
-
-
-ggsave(filename = "alpha.jpeg",
-       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
-       width =20,
-       height = 16
-       ,
-       units = c("cm"))
-```
-## Plot alpha diversities: ordered by substrate
-```{r}
-# left_join(cultures, delta)%>%
-#   subset(!substrate %in% c("feces" ,"LT", "SU", "FO"))%>%
-#   # mutate(donor_name = reorder(donor_name, diff_observed))%>%
-#   group_by(substrate) %>%
-#   wilcox_test(data= .,
-#   formula = observed ~ tryptophan,
-#   )%>%
-#   add_significance()%>%
-#   add_xy_position(x="donor_name")->wil
-
-
-left_join(alphas, delta)%>%
-  subset(!substrate %in% "feces" & !substrate %in% c("LT", "SU", "FO"))%>%
-  mutate(substrate = fct_reorder(factor(substrate), diversity_shannon, .desc = T))%>%
-  ggplot(aes(x = substrate,
-             y = diversity_shannon)) +
-  # facet_grid(scale="free", space="free_x", cols=vars(sample_type)) +
-  geom_boxplot(aes(fill=tryptophan), outlier.shape = NA) +
-  geom_point(aes(colour =donor_name, group=tryptophan), position= position_jitterdodge(0.1), alpha=0.75,   size = 2)+
-  ylab("Observed ASVs") + xlab(NULL) +
-  scale_fill_manual(values=c("cyan4",  'darkgoldenrod1'))+
-  theme(axis.text.y= element_text(size = 20), 
-            axis.title.y = element_text(size=20), 
-            axis.title.x = element_text(size=20),
-            axis.text.x = element_text(size=20, angle=90, vjust=0.2, hjust=1),
-            legend.text = element_text(size = 20),
-            legend.title = element_text(size= 20),
-            plot.title = element_text(size=20),
-          strip.text.x = element_blank(), 
-        panel.background = element_rect(fill="white"),
-        panel.border=element_rect(fill=NA))+
-  ggtitle("Alpha diversity")+
-  scale_x_discrete(labels = c('feces' = 'Feces', '7C' = '6C+Muc', '3C+Muc' = '3C+Muc', "Nut"="Nut", "SS"="SS", "7C-Muc"="6C", "3C"="3C", "H2O"=expression(paste(H[2]*O)), "Glc"="Glucose"))+
-  # stat_pvalue_manual(stat.test,  label = "p.adj.signif", label.size = 8)+
-  labs(colour="Substrate")->alpha
-
-alpha
-
-
-ggsave(filename = "alpha_substarte.jpeg",
-       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
-       width =30,
-       height = 16
-       ,
-       units = c("cm"))
-
-```
-
-
-##Plot the Deltas of alpha diversities: ordered by donor
-```{r}
-order<-c("H2O","XY","IN","SS","Nut","bGlc","PE","AG", "Pea",   "Muc") 
-
-delta%>%
-  subset(!substrate %in% c("FO", "SU", "LT"))%>%
-  # mutate(donor_name = fct_reorder(donor_name, diff_shannon, .desc = T))%>%
-  mutate(substrate = factor(substrate, levels=order))%>%
-  ggplot(aes(x=substrate, y =diff_shannon))+
-   geom_hline(yintercept = 0, linetype = "solid", colour = "grey", size=0.5)+
-  geom_boxplot(outlier.colour = NA)+
-  geom_jitter(aes(colour=donor_name), alpha=0.9, position=position_dodge(width=0.2), size =3)+
-  xlab("Substrate")+
-  ylab("Delta Shannon-Index")+
-  labs(colour= "Donor")+
-  # ylim(0,80)+
-   ggtitle("Alpha diversity in Trp-treated vs. controls")+
-  theme(axis.text.y= element_text(size = 20), 
-        axis.title.x = element_blank(), 
-        axis.title.y = element_text(size=20),
-        axis.text.x = element_text(size=20, angle=90, vjust=0.5),
-        legend.text = element_text(size = 20),
-        legend.title = element_text(size= 20),
-        plot.title = element_text(size=20),
-        strip.text = element_text(size=15),
-        axis.ticks.x = element_blank(), panel.background = element_rect(fill="white"),
-        panel.border=element_rect(fill=NA)
-        )+
-  scale_colour_manual(values=c("#1f78b4", "#33a02c", "#e31a1c", "#ff7f00", "#6a3d9a", "#a6cee3", "#b2df8a", "#fb9a99", "#fdbf6f", "#cab2d6", "darkgoldenrod2", "#b15928", "#8dd3c7", "#fb8072", "#80b1d3", "#bebada"))
-
-delta%>%
-  subset(!substrate %in% c("FO", "SU", "LT"))%>%
-  # mutate(donor_name = fct_reorder(donor_name, diff_observed, .desc = T))%>%
-   mutate(substrate = factor(substrate, levels=order))%>%
-  ggplot(aes(x=substrate, y =diff_observed))+
-   geom_hline(yintercept = 0, linetype = "solid", colour = "grey", size=0.5)+
-  geom_boxplot(outlier.colour = NA)+
-  geom_jitter(aes(colour=donor_name), alpha=0.9, position=position_dodge(width=0.2), size =3)+
-  xlab("Substrate")+
-  ylab("Delta Ovserved ASVs")+
-  labs(colour= "Donor")+
-  # ylim(0,80)+
-   ggtitle("Alpha diversity in Trp-treated vs. controls")+
-  theme(axis.text.y= element_text(size = 20),
-        axis.title.x = element_blank(),
-        axis.title.y = element_text(size=20),
-        axis.text.x = element_text(size=20, angle=90, vjust=0.5),
-        legend.text = element_text(size = 20),
-        legend.title = element_text(size= 20),
-        plot.title = element_text(size=20),
-        strip.text = element_text(size=15),
-        axis.ticks.x = element_blank(), panel.background = element_rect(fill="white"),
-        panel.border=element_rect(fill=NA)
-        )+
-  scale_colour_manual(values=c("#1f78b4", "#33a02c", "#e31a1c", "#ff7f00", "#6a3d9a", "#a6cee3", "#b2df8a", "#fb9a99", "#fdbf6f", "#cab2d6", "darkgoldenrod2", "#b15928", "#8dd3c7", "#fb8072", "#80b1d3", "#bebada"))
- 
-ggsave(filename = "delta_alphaa_donor.jpeg",
-       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
-       width = 20,
-       height = 16,
-       units = c("cm"))
-
-write.xlsx(delta,"C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/alpha_distances.xlsx" )
-
-```
-
-##Correlate Deltas of alpha diversities
-```{r}
-left_join(alphas, delta)%>%
-  left_join(.,cluster)%>%
-  subset(!substrate %in% c("LT", "SU", "FO"))%>%
-  gather(index, value, "diff_observed":"diff_shannon")%>%
-  gather(metabolite, conc, "Tryptophan":"Tryptamine")%>%
-  mutate(metabolite =factor(metabolite, levels=c("Tryptophan", "Indole", "Indoleacetate", "Indolelactate", "Indolepropionate", "Tryptamine")))%>%
-  mutate(cluster_hclust = factor(cluster_hclust, levels=c("1","2" )))%>%
-  ggplot(aes(y=conc, x=value))  +
-   geom_abline(intercept=0, slope=0, linetype=2, color="black", size=0.25)+
-  geom_vline(xintercept=0, linetype=2, color="black", size=0.25)+
-  geom_point(aes(colour=cluster_hclust), width= 0.2, alpha=0.6, size = 1)+
-  stat_poly_line(colour="darkgrey")+
-  # geom_boxplot()+
-  facet_grid(cols=vars(index), rows=vars(metabolite), scales="free")+
-  stat_correlation(mapping = use_label(c("R", "R2", "P" )), size=3, method = "pearson")+
-  ylab("Metabolite [mM]")+
-  xlab("Delta")+
-  theme(        
-        axis.ticks.x = element_blank(), panel.background = element_rect(fill="white"),
-        panel.border=element_rect(fill=NA)
-        )+
-  scale_colour_manual(values = c("coral3", "cyan4"))
-
-ggsave(filename = "alphas_indoles_corr.jpeg",
-       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
-       width = 15,
-       height = 17,
-       units = c("cm"))
-```
-
-
-```{r}
-left_join(cultures, cluster)%>%
-  subset(!substrate %in% c("feces" ,"LT", "SU", "FO"))%>%
-  mutate(test_cond = paste(tryptophan, "cluster", cluster_hclust)) %>%
-  wilcox_test(data= .,
-  formula = observed ~ test_cond,
-  )%>%
-  add_significance()%>%
-  add_xy_position(x="test_cond")->wil
-
-
-
-left_join(cultures, cluster)%>%
-  subset(!substrate %in% c("feces","LT", "SU", "FO"))%>%
-  mutate(test_cond = paste(tryptophan, "cluster", cluster_hclust)) %>%
-  ggplot(aes(x = test_cond,
-             y = observed)) +
-  # facet_grid(scale="free", space="free_x", cols=vars(sample_type)) +
-  geom_boxplot(aes(fill=cluster_hclust), outlier.shape = NA) +
-  geom_point(aes(colour=donor_name, group=cluster_hclust), position= position_jitterdodge(0.2), alpha=0.75,   size = 2)+
-  ylab("Observed ASVs") + xlab(NULL) +
-  theme(axis.text.y= element_text(size = 20), 
-            axis.title.y = element_text(size=20), 
-            axis.title.x = element_text(size=20),
-            axis.text.x = element_text(size=20, angle=90, vjust=0.2, hjust=1),
-            legend.text = element_text(size = 20),
-            legend.title = element_text(size= 20),
-            plot.title = element_text(size=20),
-          strip.text.x = element_blank(), 
-        panel.background = element_rect(fill="white"),
-        panel.border=element_rect(fill=NA))+
-  ggtitle("Alpha diversity")+
-  scale_x_discrete(labels = c('feces' = 'Feces', '7C' = '6C+Muc', '3C+Muc' = '3C+Muc', "Nut"="Nut", "SS"="SS", "7C-Muc"="6C", "3C"="3C", "H2O"=expression(paste(H[2]*O)), "Glc"="Glucose"))+
-   stat_pvalue_manual(wil,  label = "p.adj.signif", label.size = 8, hide.ns = T, bracket.nudge.y = 3 )+
-  labs(colour="Clusters")+
-   scale_fill_manual(values = c("coral3", "cyan4"))+
-  scale_alpha_manual(values=c(1, 0.7))->alpha
-
-
-alpha
-
-
-ggsave(filename = "alpha_diff_clusters.jpeg",
-       path = "C:/Users/zuendj/Desktop/03_data R/wp3/InnoNiche_data/output",
-       width =17,
-       height = 17
-       ,
-       units = c("cm"))
-
-```
 
